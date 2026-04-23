@@ -41,6 +41,7 @@ Available commands:
 6. `promote-pattern` - derive a reusable rule or decision record from related source records
 7. `ingest-markdown` - scan markdown files, extract records from front matter plus headings, and optionally index them
 8. `ingest-notion-export` - scan Notion markdown exports, preserve page ids from filenames, and resolve local links between exported pages
+9. `sync-notion` - pull pages from a Notion database or parent page via the Notion API, persist a cursor for delta sync, and optionally index the result
 
 All commands read JSON from `stdin` and write JSON to `stdout`.
 
@@ -59,7 +60,7 @@ Implemented protocol surface:
 - `logging/setLevel` as a no-op acknowledgement
 - `notifications/initialized`
 
-The server is registered in [.mcp.json](/Users/maksnalyvaiko/context-graph/.mcp.json) and exposes seven tools:
+The server is registered in [.mcp.json](/Users/maksnalyvaiko/context-graph/.mcp.json) and exposes the following tools:
 
 - `classify_record`
 - `link_record`
@@ -69,6 +70,7 @@ The server is registered in [.mcp.json](/Users/maksnalyvaiko/context-graph/.mcp.
 - `promote_pattern`
 - `ingest_markdown`
 - `ingest_notion_export`
+- `sync_notion`
 
 Example:
 
@@ -97,6 +99,13 @@ echo '{"rootPath":"/tmp/notion-export-sample","graphPath":"/tmp/notion-export-sa
   | python3 scripts/context_graph_cli.py ingest-notion-export
 ```
 
+```bash
+echo '{"token":"'"$NOTION_TOKEN"'","databaseId":"<notion-database-id>","graphPath":"./data/graph.json","cursorPath":"./data/notion_cursor.json","index":true}' \
+  | python3 scripts/context_graph_cli.py sync-notion
+```
+
+`sync-notion` requires the `NOTION_TOKEN` environment variable to be set (an internal integration token with access to the target database or page). Pass it into the payload as `token`.
+
 ## Promotion quality
 
 `promote-pattern` now emits a `quality` block with:
@@ -122,9 +131,12 @@ cd /Users/maksnalyvaiko/context-graph && PYTHONDONTWRITEBYTECODE=1 python3 -B -m
 
 ## First implementation targets
 
-1. add stronger domain and flow taxonomies
-2. add tests around markdown ingest, graph rebuilds, and promotion quality
-3. add deeper source adapters beyond markdown and Notion exports
+See [docs/roadmap.md](docs/roadmap.md) for the full plan. The next targets are:
+
+1. Claude Code integration layer: skills, slash commands, SessionStart and PostToolUse hooks, non-empty `.app.json`
+2. Live Notion sync: API client with delta sync, id mapping that dedupes with the export adapter, conflict policy
+3. Lifecycle and safety: record delete with partial edge rebuilds, TTL for inferred edges, token storage and redaction rules
+4. Evaluation harness: eval set, precision and recall metrics, CI regression gate
 
 ## Publishing note
 

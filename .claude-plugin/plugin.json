@@ -1,0 +1,24 @@
+{
+  "name": "context-graph",
+  "version": "0.1.0",
+  "description": "Builds structured context graphs from notes using normalized markers, hierarchical paths, and explicit or inferred relations.",
+  "author": {
+    "name": "Context Graph Contributors",
+    "email": "maintainers@example.com",
+    "url": "https://example.com/context-graph"
+  },
+  "homepage": "https://example.com/context-graph",
+  "repository": "https://example.com/context-graph/repository",
+  "license": "MIT",
+  "keywords": [
+    "context",
+    "knowledge-graph",
+    "retrieval",
+    "taxonomy",
+    "notes"
+  ],
+  "skills": "./skills/",
+  "commands": "./commands/",
+  "hooks": "./hooks.json",
+  "mcpServers": "./.mcp.json"
+}

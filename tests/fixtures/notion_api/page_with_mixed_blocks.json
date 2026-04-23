@@ -1,0 +1,227 @@
+{
+  "page": {
+    "object": "page",
+    "id": "11111111-1111-1111-1111-111111111111",
+    "created_time": "2026-04-01T10:00:00.000Z",
+    "last_edited_time": "2026-04-20T12:34:56.000Z",
+    "url": "https://www.notion.so/Payments-Hub-11111111111111111111111111111111",
+    "archived": false,
+    "parent": {
+      "type": "database_id",
+      "database_id": "dddddddd-dddd-dddd-dddd-dddddddddddd"
+    },
+    "properties": {
+      "Name": {
+        "id": "title",
+        "type": "title",
+        "title": [
+          {
+            "type": "text",
+            "text": {"content": "Payments Hub", "link": null},
+            "plain_text": "Payments Hub",
+            "annotations": {"bold": false, "italic": false, "code": false}
+          }
+        ]
+      },
+      "Status": {
+        "id": "status",
+        "type": "select",
+        "select": {"name": "in-progress"}
+      }
+    }
+  },
+  "blocks": [
+    {
+      "object": "block",
+      "id": "22222222-2222-2222-2222-222222222222",
+      "type": "heading_1",
+      "heading_1": {
+        "rich_text": [
+          {
+            "type": "text",
+            "text": {"content": "Payments Hub", "link": null},
+            "plain_text": "Payments Hub",
+            "annotations": {"bold": false, "italic": false, "code": false}
+          }
+        ]
+      }
+    },
+    {
+      "object": "block",
+      "id": "33333333-3333-3333-3333-333333333333",
+      "type": "paragraph",
+      "paragraph": {
+        "rich_text": [
+          {
+            "type": "text",
+            "text": {"content": "Central ", "link": null},
+            "plain_text": "Central ",
+            "annotations": {"bold": false, "italic": false, "code": false}
+          },
+          {
+            "type": "text",
+            "text": {"content": "payments", "link": null},
+            "plain_text": "payments",
+            "annotations": {"bold": true, "italic": false, "code": false}
+          },
+          {
+            "type": "text",
+            "text": {"content": " overview and ", "link": null},
+            "plain_text": " overview and ",
+            "annotations": {"bold": false, "italic": false, "code": false}
+          },
+          {
+            "type": "text",
+            "text": {"content": "runbook", "link": {"url": "https://example.com/runbook"}},
+            "plain_text": "runbook",
+            "href": "https://example.com/runbook",
+            "annotations": {"bold": false, "italic": true, "code": false}
+          },
+          {
+            "type": "text",
+            "text": {"content": ".", "link": null},
+            "plain_text": ".",
+            "annotations": {"bold": false, "italic": false, "code": false}
+          }
+        ]
+      }
+    },
+    {
+      "object": "block",
+      "id": "44444444-4444-4444-4444-444444444444",
+      "type": "heading_2",
+      "heading_2": {
+        "rich_text": [
+          {
+            "type": "text",
+            "text": {"content": "Checklist", "link": null},
+            "plain_text": "Checklist",
+            "annotations": {"bold": false, "italic": false, "code": false}
+          }
+        ]
+      }
+    },
+    {
+      "object": "block",
+      "id": "55555555-5555-5555-5555-555555555555",
+      "type": "to_do",
+      "to_do": {
+        "checked": true,
+        "rich_text": [
+          {
+            "type": "text",
+            "text": {"content": "Audit webhook retries", "link": null},
+            "plain_text": "Audit webhook retries",
+            "annotations": {"bold": false, "italic": false, "code": false}
+          }
+        ]
+      }
+    },
+    {
+      "object": "block",
+      "id": "66666666-6666-6666-6666-666666666666",
+      "type": "to_do",
+      "to_do": {
+        "checked": false,
+        "rich_text": [
+          {
+            "type": "text",
+            "text": {"content": "Add idempotency keys", "link": null},
+            "plain_text": "Add idempotency keys",
+            "annotations": {"bold": false, "italic": false, "code": false}
+          }
+        ]
+      }
+    },
+    {
+      "object": "block",
+      "id": "77777777-7777-7777-7777-777777777777",
+      "type": "bulleted_list_item",
+      "bulleted_list_item": {
+        "rich_text": [
+          {
+            "type": "text",
+            "text": {"content": "Owner: payments team", "link": null},
+            "plain_text": "Owner: payments team",
+            "annotations": {"bold": false, "italic": false, "code": false}
+          }
+        ]
+      }
+    },
+    {
+      "object": "block",
+      "id": "88888888-8888-8888-8888-888888888888",
+      "type": "bulleted_list_item",
+      "bulleted_list_item": {
+        "rich_text": [
+          {
+            "type": "text",
+            "text": {"content": "SLA: 24h", "link": null},
+            "plain_text": "SLA: 24h",
+            "annotations": {"bold": false, "italic": false, "code": false}
+          }
+        ]
+      }
+    },
+    {
+      "object": "block",
+      "id": "99999999-9999-9999-9999-999999999999",
+      "type": "code",
+      "code": {
+        "language": "python",
+        "rich_text": [
+          {
+            "type": "text",
+            "text": {"content": "print('hello')", "link": null},
+            "plain_text": "print('hello')",
+            "annotations": {"bold": false, "italic": false, "code": false}
+          }
+        ]
+      }
+    },
+    {
+      "object": "block",
+      "id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "type": "quote",
+      "quote": {
+        "rich_text": [
+          {
+            "type": "text",
+            "text": {"content": "Reliability is a feature.", "link": null},
+            "plain_text": "Reliability is a feature.",
+            "annotations": {"bold": false, "italic": false, "code": false}
+          }
+        ]
+      }
+    },
+    {
+      "object": "block",
+      "id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+      "type": "divider",
+      "divider": {}
+    },
+    {
+      "object": "block",
+      "id": "cccccccc-cccc-cccc-cccc-cccccccccccc",
+      "type": "child_page",
+      "child_page": {
+        "title": "Webhook Incident"
+      }
+    },
+    {
+      "object": "block",
+      "id": "dddddddd-dddd-dddd-dddd-dddddddddddd",
+      "type": "callout",
+      "callout": {
+        "rich_text": [
+          {
+            "type": "text",
+            "text": {"content": "Unsupported type — should be skipped", "link": null},
+            "plain_text": "Unsupported type — should be skipped",
+            "annotations": {"bold": false, "italic": false, "code": false}
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -37,6 +37,7 @@ def main() -> int:
             "promote-pattern",
             "ingest-markdown",
             "ingest-notion-export",
+            "sync-notion",
         ],
         help="Command to execute",
     )
@@ -57,6 +58,16 @@ def main() -> int:
         result = ingest_markdown(payload)
     elif args.command == "ingest-notion-export":
         result = ingest_notion_export(payload)
+    elif args.command == "sync-notion":
+        try:
+            from notion_sync import sync_notion
+        except ImportError as exc:
+            result = {
+                "error": "notion_sync module not available",
+                "detail": str(exc),
+            }
+        else:
+            result = sync_notion(payload)
     else:
         result = build_context_pack(payload)
 

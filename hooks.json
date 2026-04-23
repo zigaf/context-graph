@@ -1,3 +1,28 @@
 {
-  "hooks": []
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"${CLAUDE_PLUGIN_ROOT:-.}\" && (echo '{\"query\":\"\",\"limit\":1,\"graphPath\":\"./data/graph.json\"}' | python3 scripts/context_graph_cli.py search-graph > /dev/null 2>&1) || true",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import json,sys,os,subprocess; d=json.load(sys.stdin); fp=(d.get('tool_input') or {}).get('file_path') or ''; root=os.environ.get('CLAUDE_PLUGIN_ROOT') or os.getcwd(); sys.exit(0) if not fp.endswith('.md') else subprocess.run(['python3', os.path.join(root,'scripts','context_graph_cli.py'),'ingest-markdown'], input=json.dumps({'rootPath': os.path.dirname(os.path.abspath(fp)), 'graphPath': os.path.join(root,'data','graph.json')}), text=True, capture_output=True, timeout=20, cwd=root)\" 2>/dev/null || true",
+            "timeout": 25
+          }
+        ]
+      }
+    ]
+  }
 }

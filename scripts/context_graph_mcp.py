@@ -104,6 +104,17 @@ def handle_ingest_notion_export(arguments: dict[str, Any]) -> dict[str, Any]:
     return ingest_notion_export(arguments)
 
 
+def handle_sync_notion(arguments: dict[str, Any]) -> dict[str, Any]:
+    try:
+        from notion_sync import sync_notion
+    except ImportError as exc:
+        raise ValueError(
+            "notion_sync module not available. Install the Notion sync dependencies "
+            f"or run ingest_notion_export on a markdown export instead. Detail: {exc}"
+        )
+    return sync_notion(arguments)
+
+
 TOOLS: list[ToolSpec] = [
     ToolSpec(
         name="classify_record",
@@ -325,6 +336,36 @@ TOOLS: list[ToolSpec] = [
             "required": ["rootPath", "fileCount", "recordIds"],
         },
         handler=handle_ingest_notion_export,
+    ),
+    ToolSpec(
+        name="sync_notion",
+        title="Sync Notion",
+        description="Pull pages from a Notion database or parent page via the Notion API, convert them into records, persist a cursor for delta sync, and optionally index the result into the graph.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "token": {"type": "string"},
+                "databaseId": {"type": "string"},
+                "parentPageId": {"type": "string"},
+                "graphPath": {"type": "string"},
+                "cursorPath": {"type": "string"},
+                "since": {"type": "string"},
+                "index": {"type": "boolean"},
+            },
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "pagesPulled": {"type": "number"},
+                "recordIds": {"type": "array", "items": {"type": "string"}},
+                "newCursor": {"type": "string"},
+                "indexResult": {"type": "object"},
+                "noChangesSince": {"type": "boolean"},
+            },
+            "required": ["pagesPulled", "recordIds"],
+        },
+        handler=handle_sync_notion,
     ),
 ]
 
