@@ -82,9 +82,11 @@ Goal: move beyond one-shot export ingestion to a live, bidirectional link with a
 - [x] Define conflict policy when local edits and Notion edits diverge — documented in `docs/notion-sync.md`; current behavior is remote-wins on content
 - [x] Add a `/cg-sync-notion` slash command and an MCP tool `sync_notion`
 - [x] Make `merge_record` order-aware by comparing `last_edited_time` so a stale replay (backfill, rewound cursor) cannot overwrite a newer record
-- [ ] Extend Notion block-type coverage: `table`, `toggle`, `callout`, `column_list`, `link_to_page`, `image` (currently stubbed in `notion_markdown.py`)
-- [ ] Run live smoke-test against a real Notion workspace and record fixtures for integration tests
-- [ ] Optional push: write promoted rules and decisions back to a Notion database
+- [x] Rework `/cg-sync-notion` to orchestrate the **official Notion MCP** (`notion-search` + `notion-fetch`) so users do not have to create an internal integration or manage `NOTION_TOKEN` — the Python client remains as the headless fallback (see `docs/notion-sync.md`)
+- [ ] Delta/cursor support over the MCP path (`notion-search` does not expose a `last_edited_time` filter; for now `merge_record` handles idempotency but every sync refetches the full scope)
+- [ ] Extend Notion block-type coverage in the Python client fallback: `table`, `toggle`, `callout`, `column_list`, `link_to_page`, `image` (stubbed in `notion_markdown.py`)
+- [ ] Run live smoke-test and record fixtures for integration tests
+- [ ] Optional push: write promoted rules and decisions back to Notion (either via the Notion MCP `notion-create-pages` / `notion-update-page` or the Python client)
 
 Acceptance: running sync twice in a row is a no-op, and a Notion edit reflects in the graph on the next sync without duplicating the record. (Met in offline tests; pending live smoke-test.)
 

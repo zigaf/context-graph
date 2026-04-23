@@ -17,6 +17,7 @@ Use this skill when the user points at a directory of notes and wants Context Gr
 
 - `mcp__context-graph__ingest_markdown` — generic markdown tree. Use for a plain notes folder, Obsidian vault, or any `.md` directory.
 - `mcp__context-graph__ingest_notion_export` — use only when the source is a Notion markdown export; it preserves Notion page ids from filenames and resolves local page links.
+- For a **live Notion workspace** (no export, no API key), use the `/cg-sync-notion <scope>` slash command instead — it orchestrates the official Notion MCP (`notion-search` + `notion-fetch`) and pipes results into `index_records`. Offline export ingestion and live MCP sync share the `notion:<32-hex>` id scheme, so they dedupe.
 
 ## Input shape
 

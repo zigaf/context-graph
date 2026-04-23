@@ -1,8 +1,27 @@
 # Notion Live Sync
 
-The live Notion sync engine (`scripts/notion_sync.py`) pulls pages directly from
-the Notion API and upserts them into the Context Graph. It is the online sibling
-of the offline `ingest_notion_export` adapter in `scripts/context_graph_core.py`.
+There are two ways to pull a live Notion workspace into the Context Graph. Both
+produce records with the same canonical id (`notion:<32-hex>`), so they dedupe
+against each other and against the offline `ingest_notion_export` adapter.
+
+## Path A — via the official Notion MCP (default, no API key)
+
+The `/cg-sync-notion <scope>` slash command orchestrates the official Notion
+MCP. Claude calls `notion-search` to discover pages in scope, `notion-fetch` to
+pull content, builds Context Graph records, and hands them to
+`mcp__context-graph__index_records` in one batch. Auth flows through whatever
+OAuth login the user did when they connected the Notion MCP — the plugin never
+sees a token and Notion pages do not need a per-integration "Add connection"
+step.
+
+This path runs **only during a live Claude session** (the LLM is the glue).
+For crons, CI, or headless scripts, use Path B.
+
+## Path B — headless Python client (for crons / CI)
+
+The `scripts/notion_sync.py` module pulls pages directly from the Notion API
+using `NOTION_TOKEN`. Use it when no live session is available, or when you
+want to run the sync from a scheduled job.
 
 Entry point:
 
@@ -19,6 +38,10 @@ result = sync_notion({
     "index": True,
 })
 ```
+
+Path B also requires the user to create an **internal integration** at
+<https://www.notion.so/my-integrations> and add it to each target database or
+page via the **Connections** menu. Path A avoids both of those steps.
 
 ## Canonical record id scheme
 
@@ -114,6 +137,38 @@ strictly older.
 
 Per task constraints, `scripts/context_graph_core.py` was **not** modified.
 This is logged here as a follow-up for a future core patch.
+
+## Smoke test against a real workspace
+
+`scripts/smoke_notion.py` is a one-shot check that exercises the real Notion
+API against a throwaway graph path. It does not touch `data/graph.json`.
+
+Prerequisites:
+
+- An internal Notion integration (create one at
+  <https://www.notion.so/my-integrations>).
+- The integration added to the target database or parent page via the
+  **Connections** menu in Notion.
+- `NOTION_TOKEN` exported in the shell.
+
+Run it with either a database id or a parent page id:
+
+```bash
+export NOTION_TOKEN=secret_xxx
+python3 scripts/smoke_notion.py --database <database-id>
+# or
+python3 scripts/smoke_notion.py --parent <page-id>
+```
+
+The script prints three stages:
+
+1. **Raw Notion API reach** — lists pages with `NotionClient` directly.
+2. **First sync_notion call** — pulls pages and indexes into a temp graph.
+3. **Second sync_notion call** — expects `noChangesSince=True` (delta cursor
+   is doing its job).
+
+Exit code 0 means all three passed. Non-zero prints an actionable message
+(invalid token, integration not added to the resource, stale cursor, etc.).
 
 ## Known limitations
 
