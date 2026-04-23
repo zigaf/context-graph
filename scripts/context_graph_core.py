@@ -1438,6 +1438,147 @@ def rebuild_edges(
     return sorted(edges.values(), key=lambda item: (item["source"], item["kind"], -item["confidence"], item["target"]))
 
 
+def rebuild_edges_for_neighbors(
+    graph: dict[str, Any],
+    dirty_record_ids: set[str],
+    schema: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Partial edge rebuild restricted to a ``dirty`` subset of records.
+
+    ``dirty_record_ids`` is the set of record ids whose edges may have
+    changed (typically the former neighbors of a record that was just
+    deleted). The output ``graph["edges"]`` is equivalent to what
+    :func:`rebuild_edges` would produce over every surviving record,
+    except that edges whose endpoints are both outside ``dirty_record_ids``
+    are left untouched (same ``createdAt``, same ``updatedAt``) — a
+    micro-optimization enabled by the per-pair nature of the inference
+    engine: scores for (s, t) depend only on s and t, so removing a
+    third record from the candidate pool cannot shift them.
+
+    Explicit edges declared on dirty records are re-emitted, which
+    reproduces the (historically allowed) behavior where a record's
+    ``relations.explicit`` pointing at a now-missing target still
+    surfaces as a dangling edge — matching :func:`rebuild_edges`.
+
+    If ``dirty_record_ids`` is empty the graph is returned unchanged.
+    """
+    if not dirty_record_ids:
+        return graph
+
+    schema = schema or load_schema()
+    records: dict[str, dict[str, Any]] = graph.get("records", {}) or {}
+    alive_ids = set(records.keys())
+    dirty_alive = {rid for rid in dirty_record_ids if rid in alive_ids}
+
+    existing_edges: list[dict[str, Any]] = list(graph.get("edges", []) or [])
+
+    # Preserve createdAt on any surviving inferred edge keyed by
+    # (source, target, type). Explicit edges carry no createdAt.
+    prior_inferred: dict[tuple[Any, Any, Any], dict[str, Any]] = {}
+    for edge in existing_edges:
+        if edge.get("kind") == "inferred":
+            key = (edge.get("source"), edge.get("target"), edge.get("type"))
+            prior_inferred[key] = edge
+
+    # Partition existing edges:
+    # - stable: both endpoints alive and neither in dirty_record_ids. Keep
+    #   bit-for-bit (including updatedAt).
+    # - dangling: at least one endpoint no longer in ``records``. Drop.
+    # - touching dirty (but both alive): drop and recompute.
+    new_edges: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for edge in existing_edges:
+        source = edge.get("source")
+        target = edge.get("target")
+        if source not in alive_ids or target not in alive_ids:
+            continue
+        if source in dirty_record_ids or target in dirty_record_ids:
+            continue
+        key = (source, target, edge.get("type"))
+        new_edges[key] = edge
+
+    # Explicit re-emission: any surviving record whose explicit relation
+    # touches a dirty id. We walk all survivors for safety (cost is O(n))
+    # so we pick up explicit edges regardless of whether they were in the
+    # prior edge list.
+    for record in records.values():
+        source_id = record["id"]
+        for relation in normalize_explicit_relations(record):
+            target_id = relation["target"]
+            if source_id not in dirty_record_ids and target_id not in dirty_record_ids:
+                continue
+            key = (source_id, target_id, relation["type"])
+            new_edges[key] = {
+                "source": source_id,
+                "target": target_id,
+                "type": relation["type"],
+                "kind": "explicit",
+                "confidence": relation.get("confidence", 1.0),
+                "updatedAt": now_iso(),
+            }
+
+    # Inferred re-emission from dirty sources. For non-dirty sources with
+    # dirty targets we carry the pre-existing edge forward below, since
+    # the inference engine is per-pair and R's removal cannot change
+    # those scores.
+    record_list = list(records.values())
+    for dirty_id in dirty_alive:
+        source_record = records.get(dirty_id)
+        if source_record is None:
+            continue
+        candidates = [item for item in record_list if item["id"] != dirty_id]
+        inferred = infer_relations(
+            {
+                "record": source_record,
+                "candidates": candidates,
+                "minScore": 0.3,
+            },
+            schema,
+        )
+        for relation in inferred["inferredRelations"]:
+            key = (dirty_id, relation["id"], relation["relationType"])
+            existing = new_edges.get(key)
+            if existing and existing.get("kind") == "explicit":
+                continue
+            now = now_iso()
+            prior = prior_inferred.get(key)
+            created_at = prior.get("createdAt") if prior and prior.get("createdAt") else now
+            new_edges[key] = {
+                "source": dirty_id,
+                "target": relation["id"],
+                "type": relation["relationType"],
+                "kind": "inferred",
+                "confidence": relation["confidence"],
+                "matchedMarkers": relation.get("matchedMarkers", []),
+                "sharedTokens": relation.get("sharedTokens", []),
+                "createdAt": created_at,
+                "updatedAt": now,
+            }
+
+    # Carry forward inferred edges from non-dirty sources pointing into
+    # the dirty set. Their per-pair score is unchanged because neither
+    # endpoint moved and inference is per-pair. Without this step we
+    # would lose category-3 edges that ``rebuild_edges`` would re-emit.
+    for (src, tgt, typ), edge in prior_inferred.items():
+        if src not in alive_ids or tgt not in alive_ids:
+            continue
+        if src in dirty_record_ids:
+            continue  # already handled above
+        if tgt not in dirty_record_ids:
+            continue  # not in our responsibility zone
+        key = (src, tgt, typ)
+        if key in new_edges and new_edges[key].get("kind") == "explicit":
+            continue
+        carried = dict(edge)
+        carried["updatedAt"] = now_iso()
+        new_edges[key] = carried
+
+    graph["edges"] = sorted(
+        new_edges.values(),
+        key=lambda item: (item["source"], item["kind"], -item["confidence"], item["target"]),
+    )
+    return graph
+
+
 def markdown_record_from_file(
     path: Path,
     root_path: Path,
@@ -1739,18 +1880,50 @@ def delete_record(payload: dict[str, Any], schema: dict[str, Any] | None = None)
             "updatedAt": graph.get("updatedAt", now_iso()),
         }
 
-    records.pop(record_id, None)
+    # Capture the dirty set (former neighbors of the deleted record) from
+    # the pre-delete edge list. Only these records can possibly lose an
+    # edge; all other pairwise scores are stable by construction because
+    # the inference engine is per-pair.
+    pre_edges: list[dict[str, Any]] = list(graph.get("edges", []) or [])
+    dirty_ids: set[str] = set()
+    for edge in pre_edges:
+        if edge.get("source") == record_id:
+            neighbor = edge.get("target")
+            if neighbor and neighbor != record_id:
+                dirty_ids.add(str(neighbor))
+        elif edge.get("target") == record_id:
+            neighbor = edge.get("source")
+            if neighbor and neighbor != record_id:
+                dirty_ids.add(str(neighbor))
 
-    # Simplified partial rebuild: drop every edge touching the deleted id and
-    # re-run rebuild_edges over the remaining records. rebuild_edges is
-    # idempotent, so any inferred edges between the surviving records are
-    # preserved along with their createdAt stamps via existing_edges.
-    remaining_edges = [
-        edge for edge in graph.get("edges", [])
-        if edge.get("source") != record_id and edge.get("target") != record_id
-    ]
+    edges_before = len(pre_edges)
+    records.pop(record_id, None)
     graph["records"] = records
-    graph["edges"] = rebuild_edges(records, schema, remaining_edges)
+
+    if dirty_ids:
+        # Partial rebuild restricted to the neighbor set. Equivalent to a
+        # full ``rebuild_edges`` over every survivor (see
+        # ``rebuild_edges_for_neighbors`` docstring) but cheaper on large
+        # graphs because inference is only re-run for dirty sources.
+        rebuild_edges_for_neighbors(graph, dirty_ids, schema)
+    else:
+        # No neighbors — but a self-edge (source==target==record_id) is
+        # possible in pathological graphs, so prune any edge that still
+        # references the deleted id.
+        graph["edges"] = [
+            edge for edge in pre_edges
+            if edge.get("source") != record_id and edge.get("target") != record_id
+        ]
+
+    # Observability seam: how much work did the partial rebuild save?
+    # Local variables only — Phase 6 observability work will attach these
+    # to a tracer; the names ``edges_dropped`` and ``dirty_neighbor_count``
+    # are the stable hook.
+    edges_after = len(graph.get("edges", []) or [])
+    edges_dropped = max(edges_before - edges_after, 0)
+    dirty_neighbor_count = len(dirty_ids)
+    del edges_dropped, dirty_neighbor_count  # unused until observability lands
+
     write_graph(graph, graph_path)
 
     return {
