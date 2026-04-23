@@ -12,14 +12,14 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from context_graph_core import (  # noqa: E402
-    data_dir,
     default_graph_path,
     index_records,
+    notion_cursor_path,
 )
 
 
 def _default_cursor_path() -> Path:
-    return data_dir() / "notion_cursor.json"
+    return notion_cursor_path()
 
 
 def _normalize_notion_id(raw_id: str) -> str:

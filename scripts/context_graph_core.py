@@ -111,12 +111,40 @@ def project_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def data_dir() -> Path:
-    return project_root() / "data"
+def _legacy_mode() -> bool:
+    return os.environ.get("CONTEXT_GRAPH_LEGACY_PLUGIN_DATA") == "1"
 
 
-def default_graph_path() -> Path:
-    return data_dir() / "graph.json"
+def _resolve_workspace_file(filename: str, start: Path | None = None) -> Path:
+    if _legacy_mode():
+        plugin_data = project_root() / "data"
+        return plugin_data / filename
+    root = require_workspace(start)
+    return root / ".context-graph" / filename
+
+
+def default_graph_path(start: Path | None = None) -> Path:
+    return _resolve_workspace_file("graph.json", start)
+
+
+def schema_learned_path(start: Path | None = None) -> Path:
+    return _resolve_workspace_file("schema.learned.json", start)
+
+
+def schema_overlay_path(start: Path | None = None) -> Path:
+    return _resolve_workspace_file("schema.overlay.json", start)
+
+
+def schema_feedback_path(start: Path | None = None) -> Path:
+    return _resolve_workspace_file("schema.feedback.json", start)
+
+
+def idf_stats_path(start: Path | None = None) -> Path:
+    return _resolve_workspace_file("idf_stats.json", start)
+
+
+def notion_cursor_path(start: Path | None = None) -> Path:
+    return _resolve_workspace_file("notion_cursor.json", start)
 
 
 def load_schema() -> dict[str, Any]:
