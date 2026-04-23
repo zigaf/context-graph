@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -86,6 +87,13 @@ class FindBestRootTests(unittest.TestCase):
 
 
 class PlanReindexTests(unittest.TestCase):
+    def _workspace(self) -> tempfile.TemporaryDirectory:
+        tmp = tempfile.TemporaryDirectory()
+        root = Path(tmp.name).resolve()
+        (root / ".context-graph").mkdir()
+        (root / ".context-graph" / "workspace.json").write_text('{"version":"1"}')
+        return tmp
+
     def _graph_tracking(self, tracked_root: str) -> dict:
         return {
             "records": {
@@ -100,29 +108,38 @@ class PlanReindexTests(unittest.TestCase):
         }
 
     def test_skips_non_markdown_file(self):
-        graph = self._graph_tracking("/notes")
-        payload = {"tool_input": {"file_path": "/notes/script.py"}}
-        self.assertIsNone(plan_reindex(payload, graph))
+        with self._workspace() as tmp:
+            root = Path(tmp).resolve()
+            graph = self._graph_tracking(str(root))
+            payload = {"tool_input": {"file_path": str(root / "script.py")}}
+            self.assertIsNone(plan_reindex(payload, graph))
 
     def test_skips_when_edited_dir_not_tracked(self):
-        graph = self._graph_tracking("/notes")
-        payload = {"tool_input": {"file_path": "/tmp/scratch.md"}}
-        self.assertIsNone(plan_reindex(payload, graph))
+        with self._workspace() as tmp:
+            root = Path(tmp).resolve()
+            other = root / "other"
+            other.mkdir()
+            graph = self._graph_tracking(str(root / "notes"))
+            payload = {"tool_input": {"file_path": str(other / "scratch.md")}}
+            self.assertIsNone(plan_reindex(payload, graph))
 
     def test_returns_tracked_root_for_edit_inside_tracked_dir(self):
-        tracked = Path("/notes").resolve()
-        graph = self._graph_tracking(str(tracked))
-        payload = {"tool_input": {"file_path": str(tracked / "new.md")}}
-        decision = plan_reindex(payload, graph)
-        self.assertIsNotNone(decision)
-        edited_dir, ingest_root = decision
-        self.assertEqual(edited_dir, tracked)
-        self.assertEqual(ingest_root, tracked)
+        with self._workspace() as tmp:
+            tracked = Path(tmp).resolve() / "notes"
+            tracked.mkdir()
+            graph = self._graph_tracking(str(tracked))
+            payload = {"tool_input": {"file_path": str(tracked / "new.md")}}
+            decision = plan_reindex(payload, graph)
+            self.assertIsNotNone(decision)
+            edited_dir, ingest_root = decision
+            self.assertEqual(edited_dir, tracked.resolve())
+            self.assertEqual(ingest_root, tracked.resolve())
 
     def test_handles_missing_tool_input(self):
-        graph = self._graph_tracking("/notes")
-        self.assertIsNone(plan_reindex({}, graph))
-        self.assertIsNone(plan_reindex({"tool_input": {}}, graph))
+        with self._workspace() as tmp:
+            graph = self._graph_tracking(str(Path(tmp).resolve()))
+            self.assertIsNone(plan_reindex({}, graph))
+            self.assertIsNone(plan_reindex({"tool_input": {}}, graph))
 
 
 if __name__ == "__main__":

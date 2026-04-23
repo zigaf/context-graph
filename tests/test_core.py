@@ -19,6 +19,7 @@ from context_graph_core import (  # noqa: E402
     clear_redactors,
     delete_record,
     index_records,
+    init_workspace,
     ingest_notion_export,
     load_graph,
     merge_record,
@@ -291,6 +292,43 @@ class ContextGraphCoreTests(unittest.TestCase):
             # assertion is that nothing redacted leaked into the ranked items.
             for item in pack_plain["directMatches"]:
                 self.assertNotIn("content", item)
+
+
+class MarkerImportanceRetrievalTests(unittest.TestCase):
+    def test_importance_weights_applied_when_learned_present(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            init_workspace({"rootPath": str(root)})
+            records = [
+                {
+                    "id": "a",
+                    "title": "A",
+                    "content": "payments",
+                    "markers": {"type": "task"},
+                },
+                {
+                    "id": "b",
+                    "title": "B",
+                    "content": "payments",
+                    "markers": {"flow": "deposit", "severity": "critical"},
+                },
+            ]
+            index_records({"records": records, "workspaceRoot": str(root)})
+            learned_path = root / ".context-graph" / "schema.learned.json"
+            learned = json.loads(learned_path.read_text(encoding="utf-8"))
+            learned["markerImportance"] = {"type": 1.0, "flow": 0.1}
+            learned_path.write_text(json.dumps(learned), encoding="utf-8")
+
+            result = search_graph(
+                {
+                    "workspaceRoot": str(root),
+                    "query": "payments",
+                    "markers": {"type": "task", "flow": "deposit"},
+                }
+            )
+
+            ids = [match["id"] for match in result["directMatches"]]
+            self.assertEqual(ids[0], "a")
 
 
 if __name__ == "__main__":

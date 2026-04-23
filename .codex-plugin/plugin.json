@@ -18,6 +18,7 @@
     "notes"
   ],
   "skills": "./skills/",
+  "commands": "./commands/",
   "hooks": "./hooks.json",
   "mcpServers": "./.mcp.json",
   "apps": "./.app.json",

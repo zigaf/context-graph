@@ -4,12 +4,19 @@ import json
 import math
 import os
 import re
+import uuid
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import unquote
+
+from classifier_idf import compute_idf_from_records, load_idf_stats, save_idf_stats
+from classifier_learning import run_full_pass
+from classifier_regions import extract_regions
+from classifier_schema import load_merged_schema
+from classifier_scorer import arbitrate, score_field
 
 
 class WorkspaceNotInitializedError(RuntimeError):
@@ -147,6 +154,73 @@ def notion_cursor_path(start: Path | None = None) -> Path:
     return _resolve_workspace_file("notion_cursor.json", start)
 
 
+GITIGNORE_ENTRIES = [
+    ".context-graph/graph.json",
+    ".context-graph/schema.learned.json",
+    ".context-graph/schema.feedback.json",
+    ".context-graph/idf_stats.json",
+    ".context-graph/notion_cursor.json",
+]
+
+
+def _ensure_gitignore(root: Path) -> None:
+    gitignore_path = root / ".gitignore"
+    existing = gitignore_path.read_text(encoding="utf-8") if gitignore_path.exists() else ""
+    lines = existing.splitlines()
+    missing_entries = [entry for entry in GITIGNORE_ENTRIES if entry not in lines]
+    if not missing_entries:
+        return
+
+    if existing and not existing.endswith("\n"):
+        existing += "\n"
+    if existing:
+        existing += "\n"
+    existing += "# Context Graph (local workspace state)\n"
+    existing += "\n".join(missing_entries) + "\n"
+    gitignore_path.write_text(existing, encoding="utf-8")
+
+
+def init_workspace(payload: dict[str, Any]) -> dict[str, Any]:
+    root_value = payload.get("rootPath") or str(Path.cwd().resolve())
+    root = Path(str(root_value)).expanduser().resolve()
+    context_dir = root / ".context-graph"
+    manifest_path = context_dir / "workspace.json"
+    if manifest_path.exists():
+        raise ValueError(f"Workspace already initialized at {root}.")
+
+    context_dir.mkdir(parents=True, exist_ok=True)
+    created_at = now_iso()
+    manifest: dict[str, Any] = {
+        "version": "1",
+        "id": f"ws-{uuid.uuid4().hex[:12]}",
+        "rootPath": str(root),
+        "createdAt": created_at,
+        "updatedAt": created_at,
+    }
+
+    notion_page_id = payload.get("notionRootPageId")
+    notion_page_url = payload.get("notionRootPageUrl")
+    if notion_page_id:
+        manifest["notion"] = {
+            "rootPageId": str(notion_page_id),
+            "rootPageUrl": str(notion_page_url) if notion_page_url else None,
+            "createdAt": created_at,
+        }
+
+    with manifest_path.open("w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=True, indent=2)
+        f.write("\n")
+
+    _ensure_gitignore(root)
+
+    return {
+        "rootPath": str(root),
+        "workspaceId": manifest["id"],
+        "manifestPath": str(manifest_path),
+        "notion": manifest.get("notion"),
+    }
+
+
 def load_schema() -> dict[str, Any]:
     schema_path = project_root() / "docs" / "schema.json"
     with schema_path.open("r", encoding="utf-8") as f:
@@ -245,6 +319,136 @@ def write_graph(graph: dict[str, Any], graph_path: str | None = None) -> dict[st
         json.dump(graph, f, ensure_ascii=True, indent=2)
         f.write("\n")
     return graph
+
+
+def _workspace_from_payload(payload: dict[str, Any]) -> Path:
+    if payload.get("workspaceRoot"):
+        return Path(str(payload["workspaceRoot"])).expanduser().resolve()
+    return require_workspace()
+
+
+def _load_learned(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {
+            "version": "1",
+            "proposals": {"pending": [], "rejected": []},
+            "accepted": {},
+        }
+    with path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    data.setdefault("version", "1")
+    data.setdefault("proposals", {})
+    data["proposals"].setdefault("pending", [])
+    data["proposals"].setdefault("rejected", [])
+    data.setdefault("accepted", {})
+    return data
+
+
+def _save_learned(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data.setdefault("version", "1")
+    data["updatedAt"] = now_iso()
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=True, indent=2)
+        f.write("\n")
+
+
+def learn_schema(payload: dict[str, Any]) -> dict[str, Any]:
+    workspace = _workspace_from_payload(payload)
+    graph_path = payload.get("graphPath") or str(default_graph_path(workspace))
+    graph = load_graph(graph_path)
+    records = list(graph.get("records", {}).values())
+    analysis = run_full_pass(records)
+
+    learned_path = schema_learned_path(workspace)
+    learned = _load_learned(learned_path)
+    accepted_values = {
+        value
+        for values in learned.get("accepted", {}).values()
+        for value in values
+    }
+    rejected_values = {
+        item.get("value")
+        for item in learned["proposals"].get("rejected", [])
+        if item.get("value")
+    }
+    pending = list(learned["proposals"].get("pending", []))
+    seen_pending_values = {item.get("value") for item in pending}
+
+    for strategy in ("hierarchy", "ngram", "codePath"):
+        for proposal in analysis["proposals"].get(strategy, []):
+            value = proposal.get("value")
+            if not value or value in accepted_values or value in rejected_values or value in seen_pending_values:
+                continue
+            pending.append(proposal)
+            seen_pending_values.add(value)
+
+    learned["proposals"]["pending"] = pending
+    learned["corpusSize"] = analysis["corpusSize"]
+    learned["markerImportance"] = analysis["markerImportance"]
+    _save_learned(learned_path, learned)
+
+    return {
+        "workspaceRoot": str(workspace),
+        "proposals": analysis["proposals"],
+        "pendingCount": len(pending),
+        "markerImportance": analysis["markerImportance"],
+        "corpusSize": analysis["corpusSize"],
+    }
+
+
+def list_proposals(payload: dict[str, Any]) -> dict[str, Any]:
+    workspace = _workspace_from_payload(payload)
+    learned = _load_learned(schema_learned_path(workspace))
+    return {
+        "pending": learned["proposals"]["pending"],
+        "accepted": learned["accepted"],
+        "rejected": learned["proposals"]["rejected"],
+    }
+
+
+def apply_proposal_decision(payload: dict[str, Any]) -> dict[str, Any]:
+    workspace = _workspace_from_payload(payload)
+    value = str(payload.get("value") or "")
+    decision = str(payload.get("decision") or "")
+    field = payload.get("field")
+    if decision not in {"accept", "reject", "skip"}:
+        raise ValueError("decision must be one of accept/reject/skip")
+    if decision == "accept" and not field:
+        raise ValueError("field is required when decision=accept")
+    if not value:
+        raise ValueError("value is required")
+
+    learned_path = schema_learned_path(workspace)
+    learned = _load_learned(learned_path)
+    remaining = [
+        proposal
+        for proposal in learned["proposals"]["pending"]
+        if proposal.get("value") != value
+    ]
+
+    if decision == "accept":
+        field_name = str(field)
+        learned["accepted"].setdefault(field_name, [])
+        if value not in learned["accepted"][field_name]:
+            learned["accepted"][field_name].append(value)
+    elif decision == "reject":
+        learned["proposals"]["rejected"].append(
+            {
+                "value": value,
+                "field": field,
+                "rejectedAt": now_iso(),
+            }
+        )
+
+    learned["proposals"]["pending"] = remaining
+    _save_learned(learned_path, learned)
+    return {
+        "value": value,
+        "decision": decision,
+        "field": field,
+        "remainingPending": len(remaining),
+    }
 
 
 def parse_scalar(value: str) -> Any:
@@ -400,33 +604,121 @@ def derive_hierarchy(markers: dict[str, Any], schema: dict[str, Any]) -> dict[st
     }
 
 
+def _load_schema_for(workspace_start: Path | None) -> dict[str, Any]:
+    try:
+        overlay = schema_overlay_path(workspace_start)
+    except WorkspaceNotInitializedError:
+        overlay = None
+    try:
+        learned = schema_learned_path(workspace_start)
+    except WorkspaceNotInitializedError:
+        learned = None
+    return load_merged_schema(overlay_path=overlay, learned_path=learned)
+
+
+def _load_idf_for(workspace_start: Path | None) -> dict[str, Any]:
+    try:
+        path = idf_stats_path(workspace_start)
+    except WorkspaceNotInitializedError:
+        return {"corpusSize": 0, "tokenDocumentFrequency": {}}
+    return load_idf_stats(path)
+
+
+def _required_fields(schema: dict[str, Any]) -> list[str]:
+    return list((schema.get("record", {}) or {}).get("requiredMarkers", []) or [])
+
+
+def _merge_source(record: dict[str, Any], extra_metadata: dict[str, Any]) -> dict[str, Any]:
+    source = dict(record.get("source") or {})
+    metadata = dict(source.get("metadata") or {})
+    metadata.update(extra_metadata)
+    source["metadata"] = metadata
+    return source
+
+
+def _build_arbitration_request(
+    record: dict[str, Any],
+    regions: dict[str, str],
+    scores_by_field: dict[str, list[dict[str, Any]]],
+    arbitration_needed: list[dict[str, Any]],
+    schema: dict[str, Any],
+    required: list[str],
+) -> dict[str, Any]:
+    field_names = [item["field"] for item in arbitration_needed]
+    return {
+        "recordId": stable_record_id(record),
+        "record": {
+            "title": str(record.get("title") or ""),
+            "breadcrumb": regions.get("breadcrumb", ""),
+            "frontmatter": regions.get("frontmatter", ""),
+            "metadataBlock": regions.get("metadataBlock", ""),
+            "bodyPreview": (regions.get("body") or "")[:2000],
+        },
+        "candidates": {field: scores_by_field.get(field, []) for field in field_names},
+        "allowedValues": {
+            field: list((schema.get("markers", {}) or {}).get(field, []))
+            for field in field_names
+        },
+        "requiredFields": required,
+        "instructions": (
+            "Pick the single best value per field from allowedValues. Return null "
+            "only if truly nothing fits. Required fields should not be null unless "
+            "absolutely necessary."
+        ),
+    }
+
+
 def classify_record(payload: dict[str, Any], schema: dict[str, Any] | None = None) -> dict[str, Any]:
-    schema = schema or load_schema()
+    workspace_start = Path(str(payload["workspaceRoot"])).resolve() if payload.get("workspaceRoot") else None
+    schema = schema or _load_schema_for(workspace_start)
+    idf_stats = _load_idf_for(workspace_start)
+    idf = dict(idf_stats.get("tokenDocumentFrequency", {}))
     record = normalize_record_input(dict(payload.get("record", payload)))
     title = str(record.get("title") or "")
     content = str(record.get("content") or "")
-    text = " ".join(part for part in [title, markdown_to_text(content)] if part).strip()
+    regions = extract_regions(record)
 
     markers = normalize_markers(record.get("markers", {}), schema)
-    for marker_name in schema.get("record", {}).get("requiredMarkers", []):
-        inferred = infer_marker_from_text(marker_name, text, schema, markers)
-        if inferred:
-            markers[marker_name] = inferred
-    for marker_name in schema.get("record", {}).get("optionalMarkers", []):
-        inferred = infer_marker_from_text(marker_name, text, schema, markers)
-        if inferred:
-            markers[marker_name] = inferred
+    scores_by_field: dict[str, list[dict[str, Any]]] = {}
+    arbitration_needed: list[dict[str, Any]] = []
 
-    missing_required = [
-        marker_name
-        for marker_name in schema.get("record", {}).get("requiredMarkers", [])
-        if not markers.get(marker_name)
-    ]
+    for marker_name in (schema.get("markers", {}) or {}).keys():
+        if markers.get(marker_name):
+            continue
+        scores = score_field(marker_name, regions, schema, idf)
+        scores_by_field[marker_name] = scores[:5]
+        decision = arbitrate(scores)
+        if decision["value"]:
+            markers[marker_name] = decision["value"]
+        if decision["arbiter"] == "pending-arbitration":
+            top = decision.get("top") or {}
+            arbitration_needed.append(
+                {
+                    "field": marker_name,
+                    "reason": decision.get("reason", "ambiguous"),
+                    "topScore": top.get("score", 0.0),
+                    "gap": decision.get("gap", 0.0),
+                }
+            )
 
-    tokens = sorted(tokenize(text))
-    hierarchy = derive_hierarchy(markers, schema)
+    required = _required_fields(schema)
+    missing_required = [marker_name for marker_name in required if not markers.get(marker_name)]
+    tokens = sorted(
+        {
+            token
+            for region_text in regions.values()
+            for token in tokenize(markdown_to_text(region_text or ""))
+        }
+    )
     record_id = stable_record_id(record)
-    source = dict(record.get("source", {}))
+    regions_used = [name for name, text in regions.items() if text]
+    if arbitration_needed:
+        overall_arbiter = "pending-arbitration"
+    elif markers:
+        overall_arbiter = "deterministic"
+    else:
+        overall_arbiter = "fallback"
+
     revision = {
         "version": int(record.get("revision", {}).get("version", 1)),
         "updatedAt": record.get("revision", {}).get("updatedAt") or record.get("updatedAt") or now_iso(),
@@ -437,13 +729,34 @@ def classify_record(payload: dict[str, Any], schema: dict[str, Any] | None = Non
         "content": content,
         "markers": markers,
         "missingRequiredMarkers": missing_required,
-        "hierarchy": hierarchy,
+        "hierarchy": derive_hierarchy(markers, schema),
         "relations": record.get("relations", {"explicit": [], "inferred": []}),
-        "source": source,
+        "source": _merge_source(
+            record,
+            {
+                "classifierVersion": "2",
+                "classifierNotes": {
+                    "classifierVersion": "2",
+                    "arbiter": overall_arbiter,
+                    "regionsUsed": regions_used,
+                    "scores": scores_by_field,
+                    "reasoning": None,
+                },
+            },
+        ),
         "revision": revision,
         "tokens": tokens,
         "classifiedAt": now_iso(),
     }
+    if arbitration_needed:
+        classified["arbitrationRequest"] = _build_arbitration_request(
+            record,
+            regions,
+            scores_by_field,
+            arbitration_needed,
+            schema,
+            required,
+        )
     return classified
 
 
@@ -524,10 +837,36 @@ def extract_query_markers(query: str, schema: dict[str, Any]) -> dict[str, str]:
     return markers
 
 
-def record_weight(record: dict[str, Any], query_markers: dict[str, str], query_tokens: set[str]) -> tuple[float, list[str]]:
+def _load_importance(workspace_start: Path | None) -> dict[str, float]:
+    try:
+        learned = _load_learned(schema_learned_path(workspace_start))
+    except WorkspaceNotInitializedError:
+        return {}
+    return dict(learned.get("markerImportance", {}) or {})
+
+
+def _weighted_marker_score(
+    matched_markers: list[str],
+    query_markers: dict[str, str],
+    importance: dict[str, float],
+) -> float:
+    if not query_markers:
+        return 0.0
+    weights = {field: float(importance.get(field, 0.5)) for field in query_markers}
+    total_weight = sum(weights.values()) or 1.0
+    matched_weight = sum(weights.get(field, 0.5) for field in matched_markers)
+    return matched_weight / total_weight
+
+
+def record_weight(
+    record: dict[str, Any],
+    query_markers: dict[str, str],
+    query_tokens: set[str],
+    importance: dict[str, float] | None = None,
+) -> tuple[float, list[str]]:
     markers = record.get("markers", {})
     matched_markers = [key for key, value in query_markers.items() if markers.get(key) == value]
-    exactness = len(matched_markers) / max(len(query_markers), 1)
+    exactness = _weighted_marker_score(matched_markers, query_markers, importance or {})
     token_overlap = len(query_tokens & set(record.get("tokens", []))) / max(len(query_tokens), 1)
 
     severity_weight = {
@@ -558,6 +897,7 @@ def record_weight(record: dict[str, Any], query_markers: dict[str, str], query_t
 
 def build_context_pack(payload: dict[str, Any], schema: dict[str, Any] | None = None) -> dict[str, Any]:
     schema = schema or load_schema()
+    workspace_start = Path(str(payload["workspaceRoot"])).resolve() if payload.get("workspaceRoot") else None
     query = str(payload.get("query") or "")
     include_archived = bool(payload.get("includeArchived", False))
     raw_records = payload.get("records", [])
@@ -571,10 +911,11 @@ def build_context_pack(payload: dict[str, Any], schema: dict[str, Any] | None = 
         query_markers = {**extract_query_markers(query, schema), **query_markers}
     query_tokens = tokenize(query)
     limit = int(payload.get("limit", 8))
+    importance = _load_importance(workspace_start)
 
     ranked: list[dict[str, Any]] = []
     for record in records:
-        score, matched_markers = record_weight(record, query_markers, query_tokens)
+        score, matched_markers = record_weight(record, query_markers, query_tokens, importance)
         if score <= 0:
             continue
         item: dict[str, Any] = {
@@ -1078,13 +1419,18 @@ def collect_markdown_records(
 def index_records(payload: dict[str, Any], schema: dict[str, Any] | None = None) -> dict[str, Any]:
     schema = schema or load_schema()
     graph_path = payload.get("graphPath")
+    if not graph_path and payload.get("workspaceRoot"):
+        graph_path = str(default_graph_path(Path(str(payload["workspaceRoot"])).expanduser().resolve()))
     graph = load_graph(graph_path)
     existing_records = dict(graph.get("records", {}))
     input_records = payload.get("records", [])
 
     upserted_ids: list[str] = []
     for item in input_records:
-        classified = classify_record({"record": item}, schema)
+        classified = classify_record(
+            {"record": item, "workspaceRoot": payload.get("workspaceRoot")},
+            schema,
+        )
         merged = merge_record(existing_records.get(classified["id"]), classified)
         existing_records[merged["id"]] = merged
         upserted_ids.append(merged["id"])
@@ -1093,6 +1439,25 @@ def index_records(payload: dict[str, Any], schema: dict[str, Any] | None = None)
     graph["records"] = existing_records
     graph["edges"] = rebuild_edges(existing_records, schema, prior_edges)
     write_graph(graph, graph_path)
+
+    workspace_for_side_effects: Path | None = None
+    try:
+        if payload.get("workspaceRoot"):
+            workspace_for_side_effects = Path(str(payload["workspaceRoot"])).expanduser().resolve()
+        else:
+            workspace_for_side_effects = require_workspace()
+    except WorkspaceNotInitializedError:
+        workspace_for_side_effects = None
+
+    if workspace_for_side_effects is not None:
+        stats = compute_idf_from_records(list(graph["records"].values()))
+        save_idf_stats(idf_stats_path(workspace_for_side_effects), stats)
+        learn_schema(
+            {
+                "workspaceRoot": str(workspace_for_side_effects),
+                "graphPath": graph_path,
+            }
+        )
 
     return {
         "graphPath": str(Path(graph_path) if graph_path else default_graph_path()),
@@ -1200,6 +1565,8 @@ def _edge_survives_ttl(edge: dict[str, Any], ttl_days: float, now: datetime) -> 
 def search_graph(payload: dict[str, Any], schema: dict[str, Any] | None = None) -> dict[str, Any]:
     schema = schema or load_schema()
     graph_path = payload.get("graphPath")
+    if not graph_path and payload.get("workspaceRoot"):
+        graph_path = str(default_graph_path(Path(str(payload["workspaceRoot"])).expanduser().resolve()))
     graph = load_graph(graph_path)
     include_archived = bool(payload.get("includeArchived", False))
     all_records = list(graph.get("records", {}).values())
@@ -1219,6 +1586,7 @@ def search_graph(payload: dict[str, Any], schema: dict[str, Any] | None = None) 
             "records": visible_records,
             "limit": payload.get("limit", 8),
             "includeArchived": include_archived,
+            "workspaceRoot": payload.get("workspaceRoot"),
         },
         schema,
     )

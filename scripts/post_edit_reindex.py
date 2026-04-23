@@ -15,6 +15,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from context_graph_core import find_workspace_root
+
 
 INGEST_SYSTEMS = {"markdown", "notion-export"}
 
@@ -80,6 +82,12 @@ def plan_reindex(
         edited_dir = Path(os.path.abspath(file_path)).parent.resolve()
     except Exception:
         return None
+    try:
+        workspace_root = find_workspace_root(edited_dir)
+    except Exception:
+        workspace_root = None
+    if workspace_root is None:
+        return None
     ingest_root = find_best_root(edited_dir, graph)
     if ingest_root is None:
         return None
@@ -88,8 +96,19 @@ def plan_reindex(
 
 def main() -> int:
     payload = read_payload()
+    file_path = (payload.get("tool_input") or {}).get("file_path") or ""
+    if not isinstance(file_path, str) or not file_path.endswith(".md"):
+        return 0
+    try:
+        edited_dir = Path(os.path.abspath(file_path)).parent.resolve()
+    except Exception:
+        return 0
+    workspace_root = find_workspace_root(edited_dir)
+    if workspace_root is None:
+        return 0
+
     plugin_root = Path(os.environ.get("CLAUDE_PLUGIN_ROOT") or os.getcwd())
-    graph_path = plugin_root / "data" / "graph.json"
+    graph_path = workspace_root / ".context-graph" / "graph.json"
     if not graph_path.exists():
         return 0
     try:

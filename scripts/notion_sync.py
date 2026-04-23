@@ -12,6 +12,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from context_graph_core import (  # noqa: E402
+    classify_record,
     default_graph_path,
     index_records,
     notion_cursor_path,
@@ -196,6 +197,7 @@ def sync_notion(payload: dict[str, Any], schema: dict[str, Any] | None = None) -
             "newCursor": stored_cursor,
             "indexResult": None,
             "noChangesSince": True,
+            "fallbackCount": 0,
         }
 
     records: list[dict[str, Any]] = []
@@ -223,13 +225,34 @@ def sync_notion(payload: dict[str, Any], schema: dict[str, Any] | None = None) -
             "newCursor": stored_cursor,
             "indexResult": None,
             "noChangesSince": True,
+            "fallbackCount": 0,
         }
+
+    finalized_records: list[dict[str, Any]] = []
+    fallback_count = 0
+    for raw_record in records:
+        classified = classify_record(
+            {"record": raw_record, "workspaceRoot": payload.get("workspaceRoot")},
+            schema,
+        )
+        metadata = classified.setdefault("source", {}).setdefault("metadata", {})
+        notes = metadata.get("classifierNotes") if isinstance(metadata.get("classifierNotes"), dict) else {}
+        if notes.get("arbiter") == "pending-arbitration":
+            notes["arbiter"] = "fallback"
+            notes["reasoning"] = "Headless sync cannot use in-session arbitration."
+            fallback_count += 1
+        finalized_records.append(classified)
+    records = finalized_records
 
     index_result: dict[str, Any] | None = None
     do_index = bool(payload.get("index", True))
     if do_index:
         index_result = index_records(
-            {"graphPath": graph_path, "records": records},
+            {
+                "graphPath": graph_path,
+                "records": records,
+                "workspaceRoot": payload.get("workspaceRoot"),
+            },
             schema,
         )
 
@@ -250,4 +273,5 @@ def sync_notion(payload: dict[str, Any], schema: dict[str, Any] | None = None) -
         "newCursor": new_cursor_to_persist,
         "indexResult": index_result,
         "noChangesSince": False,
+        "fallbackCount": fallback_count,
     }

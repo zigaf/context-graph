@@ -299,5 +299,54 @@ class NotionSyncTests(unittest.TestCase):
                 )
 
 
+class SyncFallbackArbiterTests(unittest.TestCase):
+    def setUp(self):
+        self._previous_token = os.environ.get("NOTION_TOKEN")
+        os.environ["NOTION_TOKEN"] = "test-token"
+
+    def tearDown(self):
+        if self._previous_token is None:
+            os.environ.pop("NOTION_TOKEN", None)
+        else:
+            os.environ["NOTION_TOKEN"] = self._previous_token
+
+    def test_pending_arbitration_degrades_to_fallback(self):
+        page_id = "cccccccccccccccccccccccccccccccc"
+        scenario = {
+            "pages": [
+                {
+                    "id": page_id,
+                    "url": f"https://www.notion.so/{page_id}",
+                    "last_edited_time": "2026-04-23T08:30:00.000Z",
+                    "created_time": "2026-04-23T08:00:00.000Z",
+                    "parent": {"type": "page_id", "page_id": "parent"},
+                }
+            ],
+            "blocks": {page_id: []},
+            "markdown": {
+                page_id: {
+                    "title": "Payments",
+                    "content": "payments",
+                    "metadata": {"parent": "kenmore > Payments"},
+                }
+            },
+        }
+        client_factory = make_client_factory(scenario)
+        markdown_converter = make_markdown_converter(scenario)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = sync_notion(
+                {
+                    "databaseId": "db-1",
+                    "graphPath": str(Path(tmpdir) / "graph.json"),
+                    "cursorPath": str(Path(tmpdir) / "notion_cursor.json"),
+                    "clientFactory": client_factory,
+                    "markdownConverter": markdown_converter,
+                }
+            )
+
+        self.assertGreaterEqual(result["fallbackCount"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

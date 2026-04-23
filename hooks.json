@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd \"${CLAUDE_PLUGIN_ROOT:-.}\" && (echo '{\"query\":\"\",\"limit\":1,\"graphPath\":\"./data/graph.json\"}' | python3 scripts/context_graph_cli.py search-graph > /dev/null 2>&1) || true",
+            "command": "echo '{\"query\":\"\",\"limit\":1}' | python3 \"${CLAUDE_PLUGIN_ROOT:-.}/scripts/context_graph_cli.py\" search-graph > /dev/null 2>&1 || true",
             "timeout": 5
           }
         ]

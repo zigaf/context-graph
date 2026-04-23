@@ -27,6 +27,26 @@ Each record should eventually contain:
 - `docs/schema.json` - initial marker and relation schema
 - `docs/retrieval.md` - retrieval policy for building context packs
 
+## Workspace layout
+
+Run `init-workspace` or `/cg-init` once per project. This creates a local
+workspace directory:
+
+```text
+.context-graph/
+  workspace.json
+  graph.json
+  schema.learned.json
+  schema.feedback.json
+  idf_stats.json
+  notion_cursor.json
+```
+
+`workspace.json` is the opt-in marker. Runtime state files are added to
+`.gitignore` by default. The shipped schema still lives in `docs/schema.json`;
+workspace-specific learned values and marker importance live in
+`.context-graph/schema.learned.json`.
+
 ## Implemented MVP commands
 
 The current scaffold includes a local CLI runtime in `scripts/context_graph_cli.py`.
@@ -34,21 +54,28 @@ The current scaffold includes a local CLI runtime in `scripts/context_graph_cli.
 Available commands:
 
 1. `classify-record` - normalize markers, infer missing markers, and build hierarchy paths
-2. `link-record` - create inferred relations between one source record and candidate records
-3. `build-context-pack` - rank records for a user request and return a compact retrieval payload
-4. `index-records` - classify records, upsert them into local graph storage, and rebuild edges
-5. `search-graph` - build a context pack from the persisted graph index
-6. `promote-pattern` - derive a reusable rule or decision record from related source records
-7. `ingest-markdown` - scan markdown files, extract records from front matter plus headings, and optionally index them
-8. `ingest-notion-export` - scan Notion markdown exports, preserve page ids from filenames, and resolve local links between exported pages
-9. `sync-notion` - pull pages from a Notion database or parent page via the Notion API, persist a cursor for delta sync, and optionally index the result
-10. `delete-record` - remove a record from the graph and rebuild affected edges
-11. `archive-record` - hide a record from context packs and graph search without touching its edges
-12. `unarchive-record` - clear the archived flag so a record becomes visible again
+2. `init-workspace` - create `.context-graph/workspace.json` and local state ignores
+3. `link-record` - create inferred relations between one source record and candidate records
+4. `build-context-pack` - rank records for a user request and return a compact retrieval payload
+5. `index-records` - classify records, upsert them into local graph storage, rebuild edges, refresh IDF stats, and run the light learner
+6. `search-graph` - build a context pack from the persisted graph index, using learned marker importance when available
+7. `promote-pattern` - derive a reusable rule or decision record from related source records
+8. `ingest-markdown` - scan markdown files, extract records from front matter plus headings, and optionally index them
+9. `ingest-notion-export` - scan Notion markdown exports, preserve page ids from filenames, and resolve local links between exported pages
+10. `sync-notion` - headless Notion API fallback for cron/CI; live sessions should prefer `/cg-sync-notion` through the official Notion MCP OAuth connection
+11. `learn-schema` - run a full workspace learning pass and write proposal queues plus marker importance
+12. `list-proposals` - list pending, accepted, and rejected schema proposals
+13. `apply-proposal-decision` - accept, reject, or skip one schema proposal
+14. `delete-record` - remove a record from the graph and rebuild affected edges
+15. `archive-record` - hide a record from context packs and graph search without touching its edges
+16. `unarchive-record` - clear the archived flag so a record becomes visible again
 
 All commands read JSON from `stdin` and write JSON to `stdout`.
 
-By default the persisted index lives at `data/graph.json`. You can override it with `graphPath` in the input payload.
+By default, commands resolve the nearest `.context-graph/workspace.json` by
+walking up from the current directory. Set `CONTEXT_GRAPH_LEGACY_PLUGIN_DATA=1`
+to use the plugin-local `data/` directory for legacy tests or scripts. You can
+also override the graph with `graphPath` in the input payload.
 
 ## MCP server
 
@@ -66,11 +93,15 @@ Implemented protocol surface:
 The server is registered in [.mcp.json](/Users/maksnalyvaiko/context-graph/.mcp.json) and exposes the following tools:
 
 - `classify_record`
+- `init_workspace`
 - `link_record`
 - `build_context_pack`
 - `index_records`
 - `search_graph`
 - `promote_pattern`
+- `learn_schema`
+- `list_proposals`
+- `apply_proposal_decision`
 - `ingest_markdown`
 - `ingest_notion_export`
 - `sync_notion`
@@ -86,7 +117,11 @@ echo '{"record":{"title":"Webhook race in deposit flow","content":"Duplicate pay
 ```
 
 ```bash
-echo '{"records":[{"id":"r1","title":"Webhook race in deposit flow","content":"Duplicate payment creation after callback retry","markers":{"type":"bug","domain":"payments","goal":"fix-bug","status":"in-progress"}}]}' \
+echo '{}' | python3 scripts/context_graph_cli.py init-workspace
+```
+
+```bash
+echo '{"records":[{"id":"r1","title":"Webhook race in deposit flow","content":"Duplicate payment creation after callback retry","markers":{"type":"bug","domain":"payments","goal":"fix-bug","status":"in-progress"}}],"workspaceRoot":"."}' \
   | python3 scripts/context_graph_cli.py index-records
 ```
 
@@ -106,11 +141,12 @@ echo '{"rootPath":"/tmp/notion-export-sample","graphPath":"/tmp/notion-export-sa
 ```
 
 ```bash
-echo '{"token":"'"$NOTION_TOKEN"'","databaseId":"<notion-database-id>","graphPath":"./data/graph.json","cursorPath":"./data/notion_cursor.json","index":true}' \
-  | python3 scripts/context_graph_cli.py sync-notion
+echo '{"workspaceRoot":"."}' | python3 scripts/context_graph_cli.py learn-schema
 ```
 
-`sync-notion` requires the `NOTION_TOKEN` environment variable to be set (an internal integration token with access to the target database or page). Pass it into the payload as `token`.
+In live Claude Code/Codex sessions, `/cg-sync-notion` uses the official Notion
+MCP OAuth connection and does not ask for API keys. The Python `sync-notion`
+command remains a headless fallback for cron/CI environments only.
 
 ## Promotion quality
 
@@ -135,18 +171,25 @@ Run it with:
 cd /Users/maksnalyvaiko/context-graph && PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s tests -p 'test_*.py'
 ```
 
-## First implementation targets
+## Slash commands
 
-See [docs/roadmap.md](docs/roadmap.md) for the full plan. The next targets are:
+The plugin includes slash-command instructions for:
 
-1. Claude Code integration layer: skills, slash commands, SessionStart and PostToolUse hooks, non-empty `.app.json`
-2. Live Notion sync: API client with delta sync, id mapping that dedupes with the export adapter, conflict policy
-3. Lifecycle and safety: record delete with partial edge rebuilds, TTL for inferred edges, token storage and redaction rules
-4. Evaluation harness: eval set, precision and recall metrics, CI regression gate
+- `/cg-init`
+- `/cg-index`
+- `/cg-search`
+- `/cg-classify`
+- `/cg-sync-notion`
+- `/cg-schema-learn`
+- `/cg-schema-review`
+
+Schema review is intentionally user-driven: proposals are never auto-accepted
+without an explicit accept/reject/skip decision.
 
 ## Security and data
 
-See [docs/security.md](docs/security.md) for Notion token handling: where to obtain the integration token, how to pass it via `NOTION_TOKEN` or the payload `token` field, and rotation guidance if it leaks.
+See [docs/security.md](docs/security.md) for headless Notion token handling.
+Live session sync should use the official Notion MCP OAuth connection instead.
 
 See [docs/data-retention.md](docs/data-retention.md) for what lives under `data/` (`graph.json` carries full record bodies; `notion_cursor.json` is just a timestamp) and the recommended hygiene for keeping the graph out of version control.
 

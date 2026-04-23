@@ -121,6 +121,19 @@ Goal: keep the graph small, correct, and safe over time.
 
 Acceptance: deleting a record does not leave dangling edges (verified), and an inferred edge older than its TTL is not returned by `search_graph` (verified).
 
+## Phase 6 follow-ups - Phase 1 adaptive plan
+
+Status: done
+
+- [x] Workspace binding via `.context-graph/workspace.json`
+- [x] Workspace-local graph, learned schema, IDF stats, feedback, and Notion cursor paths
+- [x] Adaptive classifier pipeline: regions, IDF weighting, scorer, threshold arbiter, `classifierNotes`, and `arbitrationRequest`
+- [x] Learning loop: hierarchy, n-gram, code-path mining, marker importance, full-pass learner, proposal accept/reject/skip lifecycle
+- [x] CLI/MCP surface for `init_workspace`, `learn_schema`, `list_proposals`, and `apply_proposal_decision`
+- [x] Slash commands: `/cg-init`, `/cg-schema-learn`, `/cg-schema-review`
+- [x] `/cg-sync-notion` orchestrates in-session arbitration through the live Notion MCP/OAuth path without API keys
+- [x] Backward-compatible legacy plugin-data mode via `CONTEXT_GRAPH_LEGACY_PLUGIN_DATA=1`
+
 ## Phase 7 - Evaluation
 
 Status: not started

@@ -7,13 +7,17 @@ from typing import Any, Callable
 
 from context_graph_core import (
     archive_record,
+    apply_proposal_decision,
     build_context_pack,
     classify_record,
     delete_record,
     index_records,
     infer_relations,
+    init_workspace,
     ingest_markdown,
     ingest_notion_export,
+    learn_schema,
+    list_proposals,
     promote_pattern,
     search_graph,
     unarchive_record,
@@ -73,6 +77,10 @@ def handle_classify_record(arguments: dict[str, Any]) -> dict[str, Any]:
     return classify_record(arguments)
 
 
+def handle_init_workspace(arguments: dict[str, Any]) -> dict[str, Any]:
+    return init_workspace(arguments)
+
+
 def handle_link_record(arguments: dict[str, Any]) -> dict[str, Any]:
     if "record" not in arguments:
         raise ValueError("Missing required field: record")
@@ -97,6 +105,18 @@ def handle_search_graph(arguments: dict[str, Any]) -> dict[str, Any]:
 
 def handle_promote_pattern(arguments: dict[str, Any]) -> dict[str, Any]:
     return promote_pattern(arguments)
+
+
+def handle_learn_schema(arguments: dict[str, Any]) -> dict[str, Any]:
+    return learn_schema(arguments)
+
+
+def handle_list_proposals(arguments: dict[str, Any]) -> dict[str, Any]:
+    return list_proposals(arguments)
+
+
+def handle_apply_proposal_decision(arguments: dict[str, Any]) -> dict[str, Any]:
+    return apply_proposal_decision(arguments)
 
 
 def handle_ingest_markdown(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -164,6 +184,34 @@ TOOLS: list[ToolSpec] = [
             "required": ["id", "title", "markers", "missingRequiredMarkers", "hierarchy"],
         },
         handler=handle_classify_record,
+    ),
+    ToolSpec(
+        name="init_workspace",
+        title="Initialize Context Graph Workspace",
+        description="Create .context-graph/workspace.json at a root path and optionally record the Notion root page mapping.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "rootPath": {
+                    "type": "string",
+                    "description": "Absolute path to the workspace root. Defaults to the server CWD.",
+                },
+                "notionRootPageId": {"type": "string"},
+                "notionRootPageUrl": {"type": "string"},
+            },
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "rootPath": {"type": "string"},
+                "workspaceId": {"type": "string"},
+                "manifestPath": {"type": "string"},
+                "notion": {"type": ["object", "null"]},
+            },
+            "required": ["rootPath", "workspaceId", "manifestPath"],
+        },
+        handler=handle_init_workspace,
     ),
     ToolSpec(
         name="link_record",
@@ -303,6 +351,53 @@ TOOLS: list[ToolSpec] = [
             "required": ["promotedRecord", "sourceRecords", "sharedKeywords", "commonMarkers", "quality", "splitSuggestions"],
         },
         handler=handle_promote_pattern,
+    ),
+    ToolSpec(
+        name="learn_schema",
+        title="Run Schema Learner",
+        description="Mine hierarchy, n-grams, and code paths from the workspace graph and write candidate proposals to schema.learned.json.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workspaceRoot": {"type": "string"},
+                "graphPath": {"type": "string"},
+            },
+            "additionalProperties": False,
+        },
+        output_schema={"type": "object"},
+        handler=handle_learn_schema,
+    ),
+    ToolSpec(
+        name="list_proposals",
+        title="List Schema Proposals",
+        description="Return pending, accepted, and rejected marker proposals for the workspace.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workspaceRoot": {"type": "string"},
+            },
+            "additionalProperties": False,
+        },
+        output_schema={"type": "object"},
+        handler=handle_list_proposals,
+    ),
+    ToolSpec(
+        name="apply_proposal_decision",
+        title="Apply Schema Proposal Decision",
+        description="Accept, reject, or skip a pending proposal. Accept requires a target field.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workspaceRoot": {"type": "string"},
+                "value": {"type": "string"},
+                "field": {"type": "string"},
+                "decision": {"type": "string", "enum": ["accept", "reject", "skip"]},
+            },
+            "required": ["value", "decision"],
+            "additionalProperties": False,
+        },
+        output_schema={"type": "object"},
+        handler=handle_apply_proposal_decision,
     ),
     ToolSpec(
         name="ingest_markdown",

@@ -22,7 +22,7 @@ Goal: resolve every plugin operation against a per-directory `.context-graph/wor
 - Modify: `scripts/context_graph_core.py` (add near top, after imports)
 - Test: `tests/test_workspace.py` (new)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```python
 # tests/test_workspace.py
@@ -85,12 +85,12 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cd /Users/maksnalyvaiko/personal/context-graph && PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_workspace -v`
 Expected: ImportError — `WorkspaceNotInitializedError` / `find_workspace_root` / `require_workspace` not defined.
 
-- [ ] **Step 3: Implement minimal resolution primitives**
+- [x] **Step 3: Implement minimal resolution primitives**
 
 Add to `scripts/context_graph_core.py`, right after the `Path` / `Callable` imports block, before any other functions:
 
@@ -125,17 +125,17 @@ def require_workspace(start: Path | None = None) -> Path:
     return root
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_workspace -v`
 Expected: 5 tests pass.
 
-- [ ] **Step 5: Run the full suite to verify no regression**
+- [x] **Step 5: Run the full suite to verify no regression**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s tests -p 'test_*.py'`
 Expected: 47 tests pass (42 previous + 5 new).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/context_graph_core.py tests/test_workspace.py
@@ -150,7 +150,7 @@ git commit -m "Add workspace root resolution primitives"
 - Modify: `scripts/context_graph_core.py` (replace `data_dir` / `default_graph_path`)
 - Test: `tests/test_workspace.py` (extend)
 
-- [ ] **Step 1: Add failing tests for workspace-aware paths**
+- [x] **Step 1: Add failing tests for workspace-aware paths**
 
 Append to `tests/test_workspace.py`:
 
@@ -202,12 +202,12 @@ class PathResolverTests(unittest.TestCase):
                 os.environ.pop("CONTEXT_GRAPH_LEGACY_PLUGIN_DATA", None)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_workspace -v`
 Expected: ImportError for new resolver names.
 
-- [ ] **Step 3: Replace path resolvers**
+- [x] **Step 3: Replace path resolvers**
 
 In `scripts/context_graph_core.py`, replace the existing `data_dir` and `default_graph_path` with the workspace-aware set. Keep `project_root` since shipped schema still lives there.
 
@@ -254,17 +254,17 @@ def notion_cursor_path(start: Path | None = None) -> Path:
 
 At the top of the file, add `import os` if it isn't already there.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_workspace -v`
 Expected: 8 tests pass.
 
-- [ ] **Step 5: Verify existing tests still pass (using explicit graphPath)**
+- [x] **Step 5: Verify existing tests still pass (using explicit graphPath)**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s tests -p 'test_*.py'`
 Expected: 50 tests pass (42 + 8). Existing tests pass because they all use explicit `graphPath` against `tempfile.TemporaryDirectory()`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add scripts/context_graph_core.py tests/test_workspace.py
@@ -282,7 +282,7 @@ git commit -m "Resolve all per-workspace paths via walk-up"
 - Create: `commands/cg-init.md`
 - Test: `tests/test_workspace.py` (extend)
 
-- [ ] **Step 1: Add failing test for init_workspace**
+- [x] **Step 1: Add failing test for init_workspace**
 
 Append to `tests/test_workspace.py`:
 
@@ -347,12 +347,12 @@ class InitWorkspaceTests(unittest.TestCase):
                              "https://www.notion.so/Myapp-34a37bbb09ff81839b2ae100879d1089")
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_workspace -v`
 Expected: ImportError for `init_workspace`.
 
-- [ ] **Step 3: Implement `init_workspace`**
+- [x] **Step 3: Implement `init_workspace`**
 
 Add to `scripts/context_graph_core.py` (below the path resolvers):
 
@@ -427,12 +427,12 @@ def init_workspace(payload: dict[str, Any]) -> dict[str, Any]:
 
 Add `import uuid` at the top alongside other imports.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_workspace -v`
 Expected: 13 workspace tests pass.
 
-- [ ] **Step 5: Wire CLI subcommand**
+- [x] **Step 5: Wire CLI subcommand**
 
 In `scripts/context_graph_cli.py`:
 
@@ -445,7 +445,7 @@ elif args.command == "init-workspace":
     result = init_workspace(payload)
 ```
 
-- [ ] **Step 6: Wire MCP tool**
+- [x] **Step 6: Wire MCP tool**
 
 In `scripts/context_graph_mcp.py`, add a `handle_init_workspace` and new `ToolSpec`:
 
@@ -482,7 +482,7 @@ TOOLS.append(ToolSpec(
 
 (In reality `TOOLS` is declared via list-literal; append by inserting the new `ToolSpec(...)` inside the existing list, keeping the file formatted.)
 
-- [ ] **Step 7: Add `/cg-init` slash command**
+- [x] **Step 7: Add `/cg-init` slash command**
 
 Create `commands/cg-init.md`:
 
@@ -524,7 +524,7 @@ Steps:
 If the MCP returns an "already initialized" error, surface it verbatim and suggest the user review the existing workspace.
 ```
 
-- [ ] **Step 8: Run full suite + sanity-check CLI**
+- [x] **Step 8: Run full suite + sanity-check CLI**
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s tests -p 'test_*.py'
@@ -554,7 +554,7 @@ Goal: lay the building blocks that the new `classify_record` will compose. Still
 - Create: `scripts/classifier_regions.py`
 - Test: `tests/test_regions.py` (new)
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 ```python
 # tests/test_regions.py
@@ -638,12 +638,12 @@ class ExtractRegionsTests(unittest.TestCase):
         self.assertIn("статус", regions["metadataBlock"])
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_regions -v`
 Expected: ImportError — module doesn't exist.
 
-- [ ] **Step 3: Implement the extractor**
+- [x] **Step 3: Implement the extractor**
 
 Create `scripts/classifier_regions.py`:
 
@@ -705,12 +705,12 @@ def extract_regions(record: dict[str, Any]) -> dict[str, str]:
     }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_regions -v`
 Expected: 6 tests pass.
 
-- [ ] **Step 5: Verify full suite**
+- [x] **Step 5: Verify full suite**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s tests -p 'test_*.py'`
 Expected: prior count + 6 new.
@@ -730,7 +730,7 @@ git commit -m "Add region extractor for adaptive classifier"
 - Create: `scripts/classifier_idf.py`
 - Test: `tests/test_idf.py` (new)
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 ```python
 # tests/test_idf.py
@@ -798,12 +798,12 @@ class IdfStorageTests(unittest.TestCase):
             self.assertIn("updatedAt", raw)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_idf -v`
 Expected: ImportError.
 
-- [ ] **Step 3: Implement the IDF module**
+- [x] **Step 3: Implement the IDF module**
 
 Create `scripts/classifier_idf.py`:
 
@@ -875,7 +875,7 @@ def save_idf_stats(path: Path, stats: dict[str, Any]) -> None:
         f.write("\n")
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_idf -v`
 Expected: 5 tests pass.
@@ -895,7 +895,7 @@ git commit -m "Add IDF stats computation and persistence"
 - Create: `scripts/classifier_schema.py`
 - Test: `tests/test_schema_merge.py` (new)
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 ```python
 # tests/test_schema_merge.py
@@ -970,12 +970,12 @@ class SchemaMergeTests(unittest.TestCase):
             self.assertIn("core", schema["markers"]["room"])
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_schema_merge -v`
 Expected: ImportError.
 
-- [ ] **Step 3: Implement schema loader**
+- [x] **Step 3: Implement schema loader**
 
 Create `scripts/classifier_schema.py`:
 
@@ -1074,7 +1074,7 @@ def load_merged_schema(
     return merged
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_schema_merge -v`
 Expected: 5 tests pass.
@@ -1096,7 +1096,7 @@ git commit -m "Add schema merge loader (shipped + learned + overlay)"
 - Create: `scripts/classifier_scorer.py`
 - Test: `tests/test_scorer.py` (new)
 
-- [ ] **Step 1: Write failing tests**
+- [x] **Step 1: Write failing tests**
 
 ```python
 # tests/test_scorer.py
@@ -1207,12 +1207,12 @@ class RegionWeightsTests(unittest.TestCase):
         self.assertEqual(REGION_WEIGHTS["body"], 1.0)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_scorer -v`
 Expected: ImportError.
 
-- [ ] **Step 3: Implement scorer and arbiter**
+- [x] **Step 3: Implement scorer and arbiter**
 
 Create `scripts/classifier_scorer.py`:
 
@@ -1345,7 +1345,7 @@ def arbitrate(scores: list[dict[str, Any]]) -> dict[str, Any]:
     }
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_scorer -v`
 Expected: 9 tests pass.
@@ -1366,7 +1366,7 @@ git commit -m "Add deterministic scorer + arbiter"
 - Modify: `tests/test_core.py` (update assertions where shape tightens)
 - Test: `tests/test_arbiter.py` (new — covers arbitrationRequest shape end-to-end)
 
-- [ ] **Step 1: Write failing test for new shape**
+- [x] **Step 1: Write failing test for new shape**
 
 ```python
 # tests/test_arbiter.py
@@ -1437,12 +1437,12 @@ class ClassifyRecordV2ShapeTests(unittest.TestCase):
         self.assertIn("missingRequiredMarkers", result)
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_arbiter -v`
 Expected: `classifierNotes`/`classifierVersion` absent on record → KeyError.
 
-- [ ] **Step 3: Rewrite `classify_record`**
+- [x] **Step 3: Rewrite `classify_record`**
 
 Replace the existing `classify_record` in `scripts/context_graph_core.py` with v2. Keep the function signature compatible but compute everything through the new modules.
 
@@ -1608,11 +1608,11 @@ def _build_arbitration_request(
     }
 ```
 
-- [ ] **Step 4: Adjust existing test_core.py assertions if needed**
+- [x] **Step 4: Adjust existing test_core.py assertions if needed**
 
 Read `tests/test_core.py` and update any assertion that relied on the old flat shape (e.g., if something checks `result["source"]` strictly equal). Expected changes are minimal because most tests pass a bare record and only assert on `markers`.
 
-- [ ] **Step 5: Run tests**
+- [x] **Step 5: Run tests**
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_arbiter -v
@@ -1638,7 +1638,7 @@ git commit -m "Rewrite classify_record on the 4-stage pipeline"
 - Create: `scripts/classifier_learning.py`
 - Test: `tests/test_learning.py` (new, this task adds mine_hierarchy)
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
 
 ```python
 # tests/test_learning.py
@@ -1697,12 +1697,12 @@ class HierarchyMiningTests(unittest.TestCase):
             self.assertGreaterEqual(arch["confidence"], deep["confidence"])
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_learning -v`
 Expected: ImportError.
 
-- [ ] **Step 3: Implement hierarchy miner**
+- [x] **Step 3: Implement hierarchy miner**
 
 Create `scripts/classifier_learning.py`:
 
@@ -1771,7 +1771,7 @@ def mine_hierarchy(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return proposals
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_learning -v`
 Expected: 3 tests pass.
@@ -1791,7 +1791,7 @@ git commit -m "Add hierarchy mining for learner"
 - Modify: `scripts/classifier_learning.py` (add `mine_ngrams`, `mine_code_paths`)
 - Modify: `tests/test_learning.py` (extend)
 
-- [ ] **Step 1: Add failing tests**
+- [x] **Step 1: Add failing tests**
 
 ```python
 # Append to tests/test_learning.py
@@ -1843,12 +1843,12 @@ class CodePathMiningTests(unittest.TestCase):
         self.assertNotIn("src", values)
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_learning -v`
 Expected: ImportError for `mine_ngrams`, `mine_code_paths`.
 
-- [ ] **Step 3: Implement n-gram and code-path miners**
+- [x] **Step 3: Implement n-gram and code-path miners**
 
 Append to `scripts/classifier_learning.py`:
 
@@ -1968,7 +1968,7 @@ def mine_code_paths(
     return proposals[:limit]
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_learning -v`
 Expected: 7 tests pass (3 hierarchy + 2 ngram + 2 code-path).
@@ -1988,7 +1988,7 @@ git commit -m "Add n-gram and code-path miners"
 - Modify: `scripts/classifier_learning.py` (add `compute_marker_importance`, `run_full_pass`)
 - Modify: `tests/test_learning.py` (extend)
 
-- [ ] **Step 1: Add failing tests**
+- [x] **Step 1: Add failing tests**
 
 ```python
 # Append to tests/test_learning.py
@@ -2041,12 +2041,12 @@ class RunFullPassTests(unittest.TestCase):
         self.assertIn("type", result["markerImportance"])
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_learning -v`
 Expected: ImportError.
 
-- [ ] **Step 3: Implement importance + full-pass**
+- [x] **Step 3: Implement importance + full-pass**
 
 Append to `scripts/classifier_learning.py`:
 
@@ -2109,7 +2109,7 @@ def run_full_pass(records: list[dict[str, Any]]) -> dict[str, Any]:
     }
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_learning -v`
 Expected: 10 tests pass.
@@ -2129,7 +2129,7 @@ git commit -m "Add marker importance scoring and full-pass orchestrator"
 - Modify: `scripts/context_graph_core.py`
 - Test: `tests/test_proposals.py` (new)
 
-- [ ] **Step 1: Write failing tests for proposals**
+- [x] **Step 1: Write failing tests for proposals**
 
 ```python
 # tests/test_proposals.py
@@ -2240,12 +2240,12 @@ class ProposalLifecycleTests(unittest.TestCase):
             self.assertIn("bl-api", rejected_values)
 ```
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_proposals -v`
 Expected: ImportError for new functions.
 
-- [ ] **Step 3: Implement the three functions in core**
+- [x] **Step 3: Implement the three functions in core**
 
 Append to `scripts/context_graph_core.py`:
 
@@ -2365,7 +2365,7 @@ def apply_proposal_decision(payload: dict[str, Any]) -> dict[str, Any]:
     }
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_proposals -v`
 Expected: 4 tests pass.
@@ -2385,7 +2385,7 @@ git commit -m "Add learn_schema / list_proposals / apply_proposal_decision"
 - Modify: `scripts/context_graph_core.py` (`index_records` — add post-ingest steps)
 - Modify: `tests/test_core.py` or `tests/test_learning.py` (add regression test for the side effects)
 
-- [ ] **Step 1: Add failing test**
+- [x] **Step 1: Add failing test**
 
 Append to `tests/test_learning.py`:
 
@@ -2428,12 +2428,12 @@ class IndexRecordsSideEffectsTests(unittest.TestCase):
 
 Add `import json` and `import tempfile` at the top if missing.
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_learning -v`
 Expected: side-effect tests fail (no idf_stats.json / schema.learned.json produced by index_records).
 
-- [ ] **Step 3: Update `index_records`**
+- [x] **Step 3: Update `index_records`**
 
 In `scripts/context_graph_core.py`, find the existing `index_records`. At the end, after `write_graph`, add:
 
@@ -2462,7 +2462,7 @@ In `scripts/context_graph_core.py`, find the existing `index_records`. At the en
             pass
 ```
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run:
 ```bash
@@ -2488,7 +2488,7 @@ git commit -m "Trigger IDF refresh and light-learn after index_records"
 **Files:**
 - Modify: `scripts/context_graph_mcp.py`
 
-- [ ] **Step 1: Add tools**
+- [x] **Step 1: Add tools**
 
 Add handlers and ToolSpec entries for `learn_schema`, `list_proposals`, `apply_proposal_decision`. Pattern:
 
@@ -2545,7 +2545,7 @@ ToolSpec(
 ),
 ```
 
-- [ ] **Step 2: Verify MCP registration**
+- [x] **Step 2: Verify MCP registration**
 
 ```bash
 python3 -c "import sys; sys.path.insert(0, 'scripts'); import context_graph_mcp; names=[t.name for t in context_graph_mcp.TOOLS]; print(names); [print('missing', n) for n in ['init_workspace','learn_schema','list_proposals','apply_proposal_decision'] if n not in names]"
@@ -2567,7 +2567,7 @@ git commit -m "Register new MCP tools: learn_schema, list_proposals, apply_propo
 - Create: `commands/cg-schema-learn.md`
 - Create: `commands/cg-schema-review.md`
 
-- [ ] **Step 1: Write `/cg-schema-learn`**
+- [x] **Step 1: Write `/cg-schema-learn`**
 
 ```md
 ---
@@ -2588,7 +2588,7 @@ Steps:
 4. If the tool raises "No Context Graph workspace found", tell the user to run `/cg-init` first.
 ```
 
-- [ ] **Step 2: Write `/cg-schema-review`**
+- [x] **Step 2: Write `/cg-schema-review`**
 
 ```md
 ---
@@ -2628,7 +2628,7 @@ git commit -m "Add /cg-schema-learn and /cg-schema-review slash commands"
 **Files:**
 - Modify: `commands/cg-sync-notion.md`
 
-- [ ] **Step 1: Rewrite the command body**
+- [x] **Step 1: Rewrite the command body**
 
 Replace existing `commands/cg-sync-notion.md` with:
 
@@ -2698,7 +2698,7 @@ git commit -m "Extend /cg-sync-notion to orchestrate LLM arbitration"
 - Modify: `scripts/notion_sync.py`
 - Modify: `tests/test_notion_sync.py` (add a case where classifier hits pending-arbitration)
 
-- [ ] **Step 1: Add failing test**
+- [x] **Step 1: Add failing test**
 
 Append to `tests/test_notion_sync.py`:
 
@@ -2714,12 +2714,12 @@ class SyncFallbackArbiterTests(unittest.TestCase):
 
 Note: the exact scaffolding depends on existing helpers in `test_notion_sync.py`. Use the same `FakeNotionClient` pattern already in the test file.
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_notion_sync -v`
 Expected: fallbackCount missing from result.
 
-- [ ] **Step 3: Update `sync_notion`**
+- [x] **Step 3: Update `sync_notion`**
 
 In `scripts/notion_sync.py`, after records are built but before `index_records`:
 
@@ -2741,7 +2741,7 @@ records = finalized
 
 Return payload extended with `"fallbackCount": fallback_count`.
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_notion_sync -v
@@ -2764,7 +2764,7 @@ git commit -m "Degrade pending-arbitration to fallback in headless sync"
 - Modify: `scripts/context_graph_core.py` (`build_context_pack` / `search_graph`)
 - Test: `tests/test_core.py` (add an importance-weighted retrieval test)
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
 
 Append to `tests/test_core.py`:
 
@@ -2794,12 +2794,12 @@ class MarkerImportanceRetrievalTests(unittest.TestCase):
             self.assertEqual(ids[0], "a")
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest tests.test_core -v`
 Expected: behavior may already work because of the existing scoring; if it does, the test passes and we confirm backward compat. If it fails due to new importance weighting breaking, fix in step 3.
 
-- [ ] **Step 3: Update `build_context_pack` / `search_graph`**
+- [x] **Step 3: Update `build_context_pack` / `search_graph`**
 
 Inside `build_context_pack` in `scripts/context_graph_core.py`:
 
@@ -2829,7 +2829,7 @@ def _weighted_marker_score(matched: list[str], queried: dict[str, str]) -> float
 
 (Adjust the existing `record_weight` function to use `_weighted_marker_score` instead of a naive ratio when computing `exactness`.)
 
-- [ ] **Step 4: Run tests**
+- [x] **Step 4: Run tests**
 
 Run: `PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s tests -p 'test_*.py'`
 Expected: all green.
@@ -2853,7 +2853,7 @@ git commit -m "Weight retrieval by learned marker importance"
 - Modify: `README.md` (new commands, lifecycle references)
 - Modify: `docs/roadmap.md` (mark Phase 1 subsystems complete or in progress accordingly)
 
-- [ ] **Step 1: Ensure `post_edit_reindex.py` skips gracefully when no workspace**
+- [x] **Step 1: Ensure `post_edit_reindex.py` skips gracefully when no workspace**
 
 Inside `plan_reindex`, add an early return:
 
@@ -2869,11 +2869,11 @@ if ws_root is None:
 
 Import `find_workspace_root` from `context_graph_core` at the top (with `sys.path` already set by the helper).
 
-- [ ] **Step 2: Update README**
+- [x] **Step 2: Update README**
 
 Replace the "Implemented MVP commands" section to list the new commands: `init-workspace`, `learn-schema`, `list-proposals`, `apply-proposal-decision`. Add a "Workspace" section that explains the new `.context-graph/` layout and links to the design spec.
 
-- [ ] **Step 3: Update roadmap**
+- [x] **Step 3: Update roadmap**
 
 Mark the Phase 1 items complete:
 
@@ -2902,21 +2902,21 @@ git commit -m "Phase 1 polish: workspace-aware hooks, README, roadmap"
 **Files:**
 - Modify: none (runs existing code)
 
-- [ ] **Step 1: Full test suite**
+- [x] **Step 1: Full test suite**
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s tests -p 'test_*.py'
 # Expected: ~91 tests pass.
 ```
 
-- [ ] **Step 2: MCP tool registration sanity**
+- [x] **Step 2: MCP tool registration sanity**
 
 ```bash
 python3 -c "import sys; sys.path.insert(0, 'scripts'); import context_graph_mcp; print(sorted([t.name for t in context_graph_mcp.TOOLS]))"
 # Expected: includes init_workspace, learn_schema, list_proposals, apply_proposal_decision on top of existing tools.
 ```
 
-- [ ] **Step 3: Create a throwaway workspace and run a mini sync**
+- [x] **Step 3: Create a throwaway workspace and run a mini sync**
 
 ```bash
 tmp=$(mktemp -d)
