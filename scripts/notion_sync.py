@@ -12,10 +12,17 @@ if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
 from context_graph_core import (  # noqa: E402
+    apply_push_result,
     classify_record,
     default_graph_path,
+    find_workspace_root,
     index_records,
+    list_pushable_records,
+    load_push_state,
     notion_cursor_path,
+    plan_push,
+    record_to_notion_blocks,
+    save_push_state,
 )
 
 
@@ -275,3 +282,173 @@ def sync_notion(payload: dict[str, Any], schema: dict[str, Any] | None = None) -
         "noChangesSince": False,
         "fallbackCount": fallback_count,
     }
+
+
+def _resolve_notion_root_page_id(workspace_root: Path) -> str | None:
+    """Return the Notion root page id stored during ``/cg-init``, or ``None``.
+
+    The workspace manifest stores this at ``notion.rootPageId``. The push
+    destination is a single root page; every new Notion page created by
+    ``push_to_notion`` lands under it. If no root is configured, callers are
+    expected to raise a clear error so a user without ``/cg-init`` linkage
+    sees what to fix.
+    """
+    manifest_path = workspace_root / ".context-graph" / "workspace.json"
+    if not manifest_path.exists():
+        return None
+    try:
+        with manifest_path.open("r", encoding="utf-8") as f:
+            manifest = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+    notion = manifest.get("notion") if isinstance(manifest, dict) else None
+    if not isinstance(notion, dict):
+        return None
+    root = notion.get("rootPageId")
+    return str(root) if root else None
+
+
+def _resolve_workspace_root(payload: dict[str, Any]) -> Path:
+    workspace_root_input = payload.get("workspaceRoot")
+    if workspace_root_input:
+        return Path(str(workspace_root_input)).expanduser().resolve()
+    resolved = find_workspace_root()
+    if resolved is None:
+        raise ValueError(
+            "push_to_notion requires a workspace. Run /cg-init first or pass workspaceRoot."
+        )
+    return resolved
+
+
+def push_to_notion(payload: dict[str, Any]) -> dict[str, Any]:
+    """Push promoted rules/decisions back to Notion.
+
+    Two modes:
+    - ``dry_run`` (default ``True``) — returns the plan without touching the
+      network or the push-state file. Safe for CI and for a preview run.
+    - apply mode (``dryRun`` falsey) — calls the client's ``create_page`` /
+      ``update_page_blocks`` for every entry in the plan and records each new
+      Notion page id in ``.context-graph/notion_push.json``.
+
+    Idempotency is enforced by ``plan_push`` + the persistent state file: a
+    record already mapped to a Notion page id always routes to
+    ``update_page_blocks`` on subsequent runs, so the second ``push_to_notion``
+    call is guaranteed to produce zero ``create_page`` calls.
+    """
+    payload = dict(payload or {})
+    workspace_root = _resolve_workspace_root(payload)
+
+    graph_path_input = payload.get("graphPath")
+    graph_path = (
+        str(graph_path_input)
+        if graph_path_input
+        else str(default_graph_path(workspace_root))
+    )
+
+    record_ids_input = payload.get("recordIds")
+    record_ids = [str(rid) for rid in record_ids_input] if record_ids_input else None
+
+    records = list_pushable_records(graph_path, record_ids=record_ids)
+    state = load_push_state(workspace_root)
+    plan = plan_push(records, state)
+
+    dry_run_input = payload.get("dryRun", payload.get("dry_run", True))
+    dry_run = bool(dry_run_input)
+
+    if dry_run:
+        return {
+            "workspaceRoot": str(workspace_root),
+            "graphPath": graph_path,
+            "dryRun": True,
+            "plan": {
+                "creates": [{"id": record.get("id"), "title": record.get("title")} for record in plan["creates"]],
+                "updates": [
+                    {"id": item["record"].get("id"), "notionPageId": item["notionPageId"]}
+                    for item in plan["updates"]
+                ],
+            },
+            "pushState": dict(state),
+            "created": [],
+            "updated": [],
+        }
+
+    # Apply mode. We need a Notion root page id for any ``create`` entry.
+    root_page_id = _resolve_notion_root_page_id(workspace_root)
+    if plan["creates"] and not root_page_id:
+        raise ValueError(
+            "Workspace has no notionRootPageId. Re-run /cg-init with a root page "
+            "or remove the record from the push scope."
+        )
+
+    client = payload.get("client")
+    if client is None:
+        client = _default_push_client()
+
+    created: list[dict[str, str]] = []
+    updated: list[dict[str, str]] = []
+    current_state = dict(state)
+
+    for record in plan["creates"]:
+        record_id = record.get("id")
+        if not record_id:
+            continue
+        blocks = record_to_notion_blocks(record)
+        response = client.create_page(
+            parent_page_id=str(root_page_id),
+            title=str(record.get("title") or "Untitled"),
+            blocks=blocks,
+        )
+        new_page_id = str(response.get("id") or response.get("page_id") or "")
+        if not new_page_id:
+            raise ValueError(f"Notion create_page did not return an id for {record_id}")
+        current_state = apply_push_result(record_id, new_page_id, current_state)
+        save_push_state(current_state, workspace_root)
+        created.append({"recordId": str(record_id), "notionPageId": new_page_id})
+
+    for item in plan["updates"]:
+        record = item["record"]
+        record_id = record.get("id")
+        if not record_id:
+            continue
+        page_id = item["notionPageId"]
+        blocks = record_to_notion_blocks(record)
+        client.update_page_blocks(page_id=str(page_id), blocks=blocks)
+        # ``apply_push_result`` is idempotent: re-writes the same mapping so a
+        # half-finished run still converges on a consistent state file.
+        current_state = apply_push_result(record_id, page_id, current_state)
+        save_push_state(current_state, workspace_root)
+        updated.append({"recordId": str(record_id), "notionPageId": str(page_id)})
+
+    return {
+        "workspaceRoot": str(workspace_root),
+        "graphPath": graph_path,
+        "dryRun": False,
+        "plan": {
+            "creates": [{"id": record.get("id"), "title": record.get("title")} for record in plan["creates"]],
+            "updates": [
+                {"id": item["record"].get("id"), "notionPageId": item["notionPageId"]}
+                for item in plan["updates"]
+            ],
+        },
+        "pushState": current_state,
+        "created": created,
+        "updated": updated,
+    }
+
+
+def _default_push_client() -> Any:
+    """Lazy-import the real Notion client only when push_to_notion needs it.
+
+    Matches the lazy-import style of the pull path so tests and the dry-run
+    path never require ``NOTION_TOKEN`` or ``scripts/notion_client.py`` to be
+    importable.
+    """
+    from notion_client import NotionClient  # type: ignore  # noqa: WPS433
+
+    token = os.environ.get("NOTION_TOKEN", "").strip()
+    if not token:
+        raise ValueError(
+            "NOTION_TOKEN is not set. Either pass a pre-built client via the "
+            "'client' argument or export NOTION_TOKEN for the Python fallback."
+        )
+    return NotionClient(token=token)

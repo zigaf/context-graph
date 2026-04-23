@@ -154,12 +154,23 @@ def notion_cursor_path(start: Path | None = None) -> Path:
     return _resolve_workspace_file("notion_cursor.json", start)
 
 
+def push_state_path(start: Path | None = None) -> Path:
+    """Path to the per-workspace Notion push-state mapping.
+
+    Mirrors the other workspace path helpers. Content shape:
+    ``{record_id: notion_page_id}``. Missing file is treated as an empty
+    mapping by ``load_push_state``.
+    """
+    return _resolve_workspace_file("notion_push.json", start)
+
+
 GITIGNORE_ENTRIES = [
     ".context-graph/graph.json",
     ".context-graph/schema.learned.json",
     ".context-graph/schema.feedback.json",
     ".context-graph/idf_stats.json",
     ".context-graph/notion_cursor.json",
+    ".context-graph/notion_push.json",
 ]
 
 
@@ -1701,3 +1712,322 @@ def archive_record(payload: dict[str, Any], schema: dict[str, Any] | None = None
 
 def unarchive_record(payload: dict[str, Any], schema: dict[str, Any] | None = None) -> dict[str, Any]:
     return _set_archived(payload, False)
+
+
+# ---------------------------------------------------------------------------
+# Notion push (Phase 4a)
+# ---------------------------------------------------------------------------
+#
+# The push side writes promoted rules/decisions back to Notion so the workspace
+# becomes a real second memory. These helpers are deliberately pure: they do
+# not touch the Notion API. The slash command and the Python fallback in
+# ``scripts/notion_sync.py`` are responsible for the network calls.
+
+PUSHABLE_MARKER_TYPES = frozenset({"rule", "decision"})
+
+
+def list_pushable_records(
+    graph_path: str | None = None,
+    record_ids: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Return records eligible for push-back to Notion.
+
+    When ``record_ids`` is omitted, returns every record whose
+    ``markers.type`` is in ``PUSHABLE_MARKER_TYPES`` (rule or decision).
+    When ``record_ids`` is supplied, the marker filter is bypassed so callers
+    can push arbitrary records they have already picked. Missing ids are
+    silently dropped rather than raising so batch callers do not stall on a
+    single typo; the caller can diff requested ids against returned ids to
+    detect skips.
+    """
+    graph = load_graph(graph_path)
+    records = graph.get("records", {})
+    if record_ids is not None:
+        wanted = list(record_ids)
+        return [records[rid] for rid in wanted if rid in records]
+    out: list[dict[str, Any]] = []
+    for record in records.values():
+        markers = record.get("markers") or {}
+        if markers.get("type") in PUSHABLE_MARKER_TYPES:
+            out.append(record)
+    return out
+
+
+def load_push_state(workspace_root: Path | str | None = None) -> dict[str, str]:
+    """Read ``.context-graph/notion_push.json`` as ``{record_id: page_id}``.
+
+    Missing file returns ``{}``. Malformed JSON is treated as empty to keep
+    the push path resilient; callers needing strict validation should read
+    the file directly via ``push_state_path``.
+    """
+    start = Path(str(workspace_root)) if workspace_root else None
+    try:
+        path = push_state_path(start)
+    except WorkspaceNotInitializedError:
+        return {}
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(key): str(value) for key, value in data.items() if value is not None}
+
+
+def save_push_state(
+    state: dict[str, str],
+    workspace_root: Path | str | None = None,
+) -> None:
+    """Persist the push-state mapping to ``.context-graph/notion_push.json``."""
+    start = Path(str(workspace_root)) if workspace_root else None
+    path = push_state_path(start)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    serialized = {str(key): str(value) for key, value in state.items() if value is not None}
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(serialized, f, ensure_ascii=True, indent=2, sort_keys=True)
+        f.write("\n")
+
+
+def plan_push(
+    records: list[dict[str, Any]],
+    state: dict[str, str],
+) -> dict[str, list[dict[str, Any]]]:
+    """Classify ``records`` into creates vs updates against the push ``state``.
+
+    Pure function: does not touch the network or disk. Records whose id is
+    already mapped in ``state`` become ``updates`` entries (paired with the
+    existing Notion page id). Everything else becomes a ``create``.
+    """
+    creates: list[dict[str, Any]] = []
+    updates: list[dict[str, Any]] = []
+    for record in records:
+        record_id = record.get("id")
+        if not record_id:
+            continue
+        mapped = state.get(str(record_id))
+        if mapped:
+            updates.append({"record": record, "notionPageId": mapped})
+        else:
+            creates.append(record)
+    return {"creates": creates, "updates": updates}
+
+
+def apply_push_result(
+    record_id: str,
+    notion_page_id: str,
+    state: dict[str, str],
+) -> dict[str, str]:
+    """Return a new state dict with ``record_id -> notion_page_id`` added.
+
+    Does not mutate the input mapping; callers must use the return value.
+    Overwrites any prior mapping for the same ``record_id`` so re-creates
+    after a Notion-side restore stay idempotent.
+    """
+    new_state = dict(state)
+    new_state[str(record_id)] = str(notion_page_id)
+    return new_state
+
+
+def _rich_text(plain: str) -> list[dict[str, Any]]:
+    """Wrap a plain string as a Notion rich_text run.
+
+    The public Notion API accepts the richer ``{"type": "text", "text":
+    {"content": ...}}`` shape. We keep the output minimal — no annotations,
+    no link — because the push path is best-effort. Callers that need
+    fidelity should hand the markdown body to the Notion MCP directly and
+    let it parse annotations.
+    """
+    if not plain:
+        return []
+    return [
+        {
+            "type": "text",
+            "text": {"content": plain, "link": None},
+            "plain_text": plain,
+            "annotations": {},
+        }
+    ]
+
+
+def _flush_code_block(lines: list[str], language: str) -> dict[str, Any]:
+    body = "\n".join(lines)
+    return {
+        "object": "block",
+        "type": "code",
+        "code": {
+            "language": language or "plain text",
+            "rich_text": _rich_text(body),
+        },
+    }
+
+
+def _paragraph_block(text: str) -> dict[str, Any]:
+    return {
+        "object": "block",
+        "type": "paragraph",
+        "paragraph": {"rich_text": _rich_text(text)},
+    }
+
+
+_BULLETED_PREFIX = ("- ", "* ", "+ ")
+_TODO_CHECKED_PREFIX = ("- [x] ", "- [X] ")
+_TODO_UNCHECKED_PREFIX = ("- [ ] ",)
+
+
+def _numbered_prefix_len(line: str) -> int:
+    """Return the length of a leading ``\\d+\\. `` prefix, or 0."""
+    idx = 0
+    while idx < len(line) and line[idx].isdigit():
+        idx += 1
+    if idx == 0:
+        return 0
+    if idx < len(line) - 1 and line[idx] == "." and line[idx + 1] == " ":
+        return idx + 2
+    return 0
+
+
+def record_to_notion_blocks(record: dict[str, Any]) -> list[dict[str, Any]]:
+    """Convert a local record to a list of Notion block payloads.
+
+    Best-effort inverse of ``scripts/notion_markdown.py``. Covers the block
+    types the pull path already round-trips: heading_1/2/3, paragraph,
+    bulleted_list_item, numbered_list_item, to_do, code, quote, divider.
+    Unknown markdown falls through as paragraphs; empty records return ``[]``.
+
+    This is intended for the Python fallback path. The MCP path prefers the
+    raw markdown string because ``notion-create-pages`` accepts markdown and
+    parses annotations server-side.
+    """
+    content = str(record.get("content") or "")
+    if not content.strip():
+        return []
+
+    blocks: list[dict[str, Any]] = []
+    lines = content.splitlines()
+    in_code = False
+    code_language = ""
+    code_buffer: list[str] = []
+
+    for raw_line in lines:
+        line = raw_line.rstrip()
+        if in_code:
+            if line.startswith("```"):
+                blocks.append(_flush_code_block(code_buffer, code_language))
+                code_buffer = []
+                code_language = ""
+                in_code = False
+                continue
+            code_buffer.append(raw_line)
+            continue
+
+        if line.startswith("```"):
+            in_code = True
+            code_language = line[3:].strip()
+            code_buffer = []
+            continue
+
+        stripped = line.strip()
+        if not stripped:
+            # Blank lines are paragraph separators in markdown. We simply
+            # skip them — adjacent non-blank blocks are kept distinct by
+            # being separate entries in ``blocks``.
+            continue
+
+        if stripped == "---" or stripped == "***":
+            blocks.append({"object": "block", "type": "divider", "divider": {}})
+            continue
+
+        if stripped.startswith("### "):
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "heading_3",
+                    "heading_3": {"rich_text": _rich_text(stripped[4:].strip())},
+                }
+            )
+            continue
+        if stripped.startswith("## "):
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "heading_2",
+                    "heading_2": {"rich_text": _rich_text(stripped[3:].strip())},
+                }
+            )
+            continue
+        if stripped.startswith("# "):
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "heading_1",
+                    "heading_1": {"rich_text": _rich_text(stripped[2:].strip())},
+                }
+            )
+            continue
+
+        if stripped.startswith(_TODO_CHECKED_PREFIX):
+            todo_text = stripped[len("- [x] "):].strip()
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "to_do",
+                    "to_do": {"checked": True, "rich_text": _rich_text(todo_text)},
+                }
+            )
+            continue
+        if stripped.startswith(_TODO_UNCHECKED_PREFIX):
+            todo_text = stripped[len("- [ ] "):].strip()
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "to_do",
+                    "to_do": {"checked": False, "rich_text": _rich_text(todo_text)},
+                }
+            )
+            continue
+
+        if stripped.startswith(_BULLETED_PREFIX):
+            text = stripped[2:].strip()
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "bulleted_list_item",
+                    "bulleted_list_item": {"rich_text": _rich_text(text)},
+                }
+            )
+            continue
+
+        numbered_len = _numbered_prefix_len(stripped)
+        if numbered_len:
+            text = stripped[numbered_len:].strip()
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "numbered_list_item",
+                    "numbered_list_item": {"rich_text": _rich_text(text)},
+                }
+            )
+            continue
+
+        if stripped.startswith(">"):
+            quote_text = stripped[1:].lstrip()
+            blocks.append(
+                {
+                    "object": "block",
+                    "type": "quote",
+                    "quote": {"rich_text": _rich_text(quote_text)},
+                }
+            )
+            continue
+
+        blocks.append(_paragraph_block(stripped))
+
+    if in_code:
+        # Unclosed fence — emit whatever we buffered so callers still see the
+        # content. Notion's renderer will accept an open-ended code block.
+        blocks.append(_flush_code_block(code_buffer, code_language))
+
+    return blocks
