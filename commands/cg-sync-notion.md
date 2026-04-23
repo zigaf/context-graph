@@ -1,9 +1,11 @@
 ---
-description: Pull Notion pages into the Context Graph via the official Notion MCP
-argument-hint: <scope> [--full]  (search query, page title, or database name; optional --full forces a complete refetch)
+description: Pull Notion pages into the Context Graph via the official Notion MCP, and optionally push promoted rules/decisions back.
+argument-hint: <scope> [--full | push]  (search query, page title, or database name; --full forces a complete refetch; "push" pushes promoted records back)
 ---
 
 The user wants to sync Notion content into the workspace's Context Graph. The Notion MCP is expected to be connected through the live session's OAuth connection, so no API key or Notion token is needed. The plugin stores a per-page cursor (`page_id -> last_edited_time`) so repeat syncs skip pages Notion has not edited since the last run.
+
+## Pull (default)
 
 Steps:
 
@@ -68,3 +70,59 @@ Steps:
     - If new proposals were produced, mention `/cg-schema-review`.
 
 Do not invent marker values beyond `allowedValues`. Do not ask for or use API keys. If validation rejects a marker, fall back to the classifier's deterministic top value.
+
+## Push (opt-in)
+
+Push promotes the reverse direction: local `rule` and `decision` records (the output of `promote_pattern`) are written back to Notion so the workspace becomes a real second memory.
+
+**Do not push without explicit consent.** Trigger the push flow only when the user's message includes a clear intent like "push", "push to Notion", "send promoted rules back", or when `$ARGUMENTS` contains the literal token `push`. If the user uses the unambiguous phrasing `push-auto` (or `--push-auto`), treat that as pre-confirmed and skip the confirmation prompt below. In every other case, confirm first: summarize which records would be affected (from `plan_notion_push`) and ask "push these N records to Notion?" — proceed only on a yes.
+
+Steps:
+
+1. Confirm a Context Graph workspace exists with a Notion root page.
+   - Call `mcp__context-graph__plan_notion_push` with `{graphPath?, workspaceRoot?, recordIds?}`.
+   - Read `plan.creates` and `plan.updates`. If both are empty, tell the user there is nothing to push and stop.
+   - If any `create` exists and the workspace has no `notion.rootPageId` (the user skipped the Notion root during `/cg-init`), tell the user to re-run `/cg-init` with a Notion root page and stop. You can detect this by checking `workspace.json` or by noting the first `create` path failing with a clear error.
+
+2. Show the plan.
+   - Summarize: "Will create N pages and update M pages. Creates land under Notion root page `<rootPageId>`. Proceed?"
+   - Wait for explicit confirmation (unless `push-auto`).
+
+3. For each entry in `plan.creates`:
+   - Call `mcp__context-graph__record_to_notion_payload` with `{recordId, graphPath?, workspaceRoot?}` to get `{title, blocks, content, parentPageId}`.
+   - Call `mcp__notion__notion-create-pages` with:
+     - `parent: {type: "page_id", page_id: parentPageId}`
+     - `pages: [{properties: {title: title}, content: content}]`
+   - On success, extract the new page id from the create-pages response.
+   - Call `mcp__context-graph__apply_notion_push_result` with `{recordId, notionPageId, workspaceRoot?}`.
+
+4. For each entry in `plan.updates`:
+   - Call `mcp__context-graph__record_to_notion_payload` with `{recordId, graphPath?, workspaceRoot?}`.
+   - Call `mcp__notion__notion-update-page` with:
+     - `page_id: plan.updates[i].notionPageId`
+     - `command: "replace_content"`
+     - `new_str: <the content field from record_to_notion_payload>`
+     - `allow_deleting_content: true` (body-only replacement of a rule page; no child pages are ever created here)
+     - `properties: {}`, `content_updates: []` (required-field placeholders)
+   - Call `mcp__context-graph__apply_notion_push_result` with `{recordId, notionPageId, workspaceRoot?}` (idempotent: preserves the existing mapping).
+
+5. Summarize what was pushed.
+   - List created page ids, updated page ids, and any records that were skipped.
+
+### Error handling
+
+- **No `notionRootPageId`:** the push stops before any network call. Tell the user to re-init the workspace with a Notion root page (`/cg-init`), or to use `recordIds` scoped to records that are already in the push state (i.e., already exist in Notion).
+- **Notion returns an error on create:** skip that record, surface the error, and continue with the rest. The push state file is only updated after a successful response, so the record stays in `creates` on the next run and the push is automatically retry-safe.
+- **Notion returns an error on update:** same pattern — skip, report, continue. The mapping is preserved, so the next run retries the update.
+- **Half-finished push:** everything written to `.context-graph/notion_push.json` is final and committed after each success. Re-running the slash command picks up at the next unpushed record; successful creates never duplicate because `plan_notion_push` classifies them as updates on the second pass.
+
+### Headless / CI fallback
+
+For scripted runs without a live session, use the Python CLI:
+
+```
+python3 scripts/context_graph_cli.py push-notion --dry-run
+python3 scripts/context_graph_cli.py push-notion --apply
+```
+
+The CLI defaults to `--dry-run` so accidental invocation cannot duplicate content.

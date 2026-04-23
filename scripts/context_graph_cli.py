@@ -31,6 +31,44 @@ def read_payload() -> dict[str, Any]:
     return json.loads(raw)
 
 
+def _run_push_notion(argv: list[str]) -> int:
+    """Entry point for the ``push-notion`` subcommand.
+
+    Defaults to ``--dry-run`` so accidental invocation cannot duplicate
+    content in Notion. Pass ``--apply`` to actually write.
+    """
+    sub_parser = argparse.ArgumentParser(
+        prog="context-graph push-notion",
+        description="Push promoted rules/decisions back to Notion (Python fallback).",
+    )
+    sub_parser.add_argument("--graph", dest="graph", help="Path to graph.json")
+    sub_parser.add_argument(
+        "--record-ids",
+        dest="record_ids",
+        help="Comma-separated record ids to push instead of the default scope.",
+    )
+    group = sub_parser.add_mutually_exclusive_group()
+    group.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
+    group.add_argument("--apply", dest="dry_run", action="store_false")
+    sub_parser.add_argument("--workspace-root", dest="workspace_root")
+    sub_args = sub_parser.parse_args(argv)
+
+    from notion_sync import push_to_notion  # type: ignore  # noqa: WPS433
+
+    payload: dict[str, Any] = {"dryRun": bool(sub_args.dry_run)}
+    if sub_args.graph:
+        payload["graphPath"] = sub_args.graph
+    if sub_args.workspace_root:
+        payload["workspaceRoot"] = sub_args.workspace_root
+    if sub_args.record_ids:
+        payload["recordIds"] = [rid.strip() for rid in sub_args.record_ids.split(",") if rid.strip()]
+
+    result = push_to_notion(payload)
+    json.dump(result, sys.stdout, ensure_ascii=True, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     argv_list = list(sys.argv[1:] if argv is None else argv)
 
@@ -40,6 +78,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if argv_list and argv_list[0] == "eval":
         from eval_cli import main as eval_main
         return eval_main(argv_list[1:])
+
+    # ``push-notion`` has its own flag surface distinct from the stdin-JSON
+    # convention used by the other subcommands. Dispatched before the main
+    # parser runs for the same reason.
+    if argv_list and argv_list[0] == "push-notion":
+        return _run_push_notion(argv_list[1:])
 
     parser = argparse.ArgumentParser(description="Context Graph CLI")
     parser.add_argument(
@@ -58,6 +102,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "ingest-markdown",
             "ingest-notion-export",
             "sync-notion",
+            "push-notion",
             "delete-record",
             "archive-record",
             "unarchive-record",

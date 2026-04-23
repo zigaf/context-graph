@@ -6,10 +6,12 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from context_graph_core import (
-    archive_record,
     apply_proposal_decision,
+    apply_push_result,
+    archive_record,
     build_context_pack,
     classify_record,
+    default_graph_path,
     delete_record,
     filter_pages_by_cursor,
     index_records,
@@ -19,9 +21,15 @@ from context_graph_core import (
     ingest_notion_export,
     learn_schema,
     list_proposals,
+    list_pushable_records,
+    load_graph,
     load_notion_cursor,
+    load_push_state,
+    plan_push,
     promote_pattern,
+    record_to_notion_blocks,
     save_notion_cursor,
+    save_push_state,
     search_graph,
     unarchive_record,
 )
@@ -205,6 +213,97 @@ def handle_retrieval_scoring(arguments: dict[str, Any]) -> dict[str, Any]:
         "summary": summary,
         "perQuery": [_eval_harness.result_to_dict(r) for r in results],
         "baseline": baseline_info,
+    }
+
+
+def _workspace_from_args(arguments: dict[str, Any]):
+    workspace = arguments.get("workspaceRoot")
+    return workspace if workspace else None
+
+
+def handle_plan_notion_push(arguments: dict[str, Any]) -> dict[str, Any]:
+    workspace = _workspace_from_args(arguments)
+    graph_path_input = arguments.get("graphPath")
+    graph_path = str(graph_path_input) if graph_path_input else str(default_graph_path(workspace))
+    record_ids_input = arguments.get("recordIds")
+    record_ids = [str(rid) for rid in record_ids_input] if record_ids_input else None
+    records = list_pushable_records(graph_path, record_ids=record_ids)
+    state = load_push_state(workspace)
+    plan = plan_push(records, state)
+    return {
+        "graphPath": graph_path,
+        "plan": {
+            "creates": [
+                {"id": record.get("id"), "title": record.get("title")}
+                for record in plan["creates"]
+            ],
+            "updates": [
+                {"id": item["record"].get("id"), "notionPageId": item["notionPageId"]}
+                for item in plan["updates"]
+            ],
+        },
+        "pushState": state,
+    }
+
+
+def handle_apply_notion_push_result(arguments: dict[str, Any]) -> dict[str, Any]:
+    record_id = arguments.get("recordId")
+    notion_page_id = arguments.get("notionPageId")
+    if not record_id:
+        raise ValueError("Missing required field: recordId")
+    if not notion_page_id:
+        raise ValueError("Missing required field: notionPageId")
+    workspace = _workspace_from_args(arguments)
+    state = load_push_state(workspace)
+    new_state = apply_push_result(str(record_id), str(notion_page_id), state)
+    save_push_state(new_state, workspace)
+    return {
+        "recordId": str(record_id),
+        "notionPageId": str(notion_page_id),
+        "pushState": new_state,
+    }
+
+
+def _resolve_notion_root_page_id_from_workspace(workspace) -> str | None:
+    from pathlib import Path
+
+    if not workspace:
+        return None
+    root = Path(str(workspace))
+    manifest_path = root / ".context-graph" / "workspace.json"
+    if not manifest_path.exists():
+        return None
+    try:
+        with manifest_path.open("r", encoding="utf-8") as f:
+            manifest = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+    notion = manifest.get("notion") if isinstance(manifest, dict) else None
+    if not isinstance(notion, dict):
+        return None
+    root_id = notion.get("rootPageId")
+    return str(root_id) if root_id else None
+
+
+def handle_record_to_notion_payload(arguments: dict[str, Any]) -> dict[str, Any]:
+    record_id = arguments.get("recordId")
+    if not record_id:
+        raise ValueError("Missing required field: recordId")
+    workspace = _workspace_from_args(arguments)
+    graph_path_input = arguments.get("graphPath")
+    graph_path = str(graph_path_input) if graph_path_input else str(default_graph_path(workspace))
+    graph = load_graph(graph_path)
+    record = (graph.get("records") or {}).get(str(record_id))
+    if not record:
+        raise ValueError(f"Record not found in graph: {record_id}")
+    blocks = record_to_notion_blocks(record)
+    parent_page_id = _resolve_notion_root_page_id_from_workspace(workspace)
+    return {
+        "recordId": str(record_id),
+        "title": str(record.get("title") or "Untitled"),
+        "blocks": blocks,
+        "content": str(record.get("content") or ""),
+        "parentPageId": parent_page_id,
     }
 
 
@@ -600,6 +699,89 @@ TOOLS: list[ToolSpec] = [
             "required": ["fresh", "stale"],
         },
         handler=handle_filter_pages_by_cursor,
+    ),
+    ToolSpec(
+        name="plan_notion_push",
+        title="Plan Notion Push",
+        description="Classify pushable records (rule/decision markers by default) against the workspace push state and return creates vs updates without touching Notion.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "graphPath": {"type": "string"},
+                "workspaceRoot": {"type": "string"},
+                "recordIds": {"type": "array", "items": {"type": "string"}},
+            },
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "graphPath": {"type": "string"},
+                "plan": {
+                    "type": "object",
+                    "properties": {
+                        "creates": {"type": "array"},
+                        "updates": {"type": "array"},
+                    },
+                    "required": ["creates", "updates"],
+                },
+                "pushState": {"type": "object"},
+            },
+            "required": ["plan", "pushState"],
+        },
+        handler=handle_plan_notion_push,
+    ),
+    ToolSpec(
+        name="apply_notion_push_result",
+        title="Apply Notion Push Result",
+        description="Record a {recordId -> notionPageId} mapping in .context-graph/notion_push.json so re-runs update instead of duplicating.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "recordId": {"type": "string"},
+                "notionPageId": {"type": "string"},
+                "workspaceRoot": {"type": "string"},
+            },
+            "required": ["recordId", "notionPageId"],
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "recordId": {"type": "string"},
+                "notionPageId": {"type": "string"},
+                "pushState": {"type": "object"},
+            },
+            "required": ["recordId", "notionPageId", "pushState"],
+        },
+        handler=handle_apply_notion_push_result,
+    ),
+    ToolSpec(
+        name="record_to_notion_payload",
+        title="Record To Notion Payload",
+        description="Return the title, markdown content, Notion blocks, and parent page id for a local record so the slash command can hand it to notion-create-pages or notion-update-page.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "recordId": {"type": "string"},
+                "graphPath": {"type": "string"},
+                "workspaceRoot": {"type": "string"},
+            },
+            "required": ["recordId"],
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "recordId": {"type": "string"},
+                "title": {"type": "string"},
+                "blocks": {"type": "array"},
+                "content": {"type": "string"},
+                "parentPageId": {"type": ["string", "null"]},
+            },
+            "required": ["recordId", "title", "blocks", "content"],
+        },
+        handler=handle_record_to_notion_payload,
     ),
     ToolSpec(
         name="delete_record",

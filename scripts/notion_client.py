@@ -194,3 +194,62 @@ class NotionClient:
             },
         )
         return self._envelope(response, "blocks")
+
+    # ----- push surface -----------------------------------------------------
+
+    def create_page(
+        self,
+        parent_page_id: str,
+        title: str,
+        blocks: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Create a new child page under ``parent_page_id`` with ``blocks``.
+
+        The ``properties.title`` shape is the one Notion expects for
+        non-database (regular) pages — a single ``title`` property whose
+        value is a list of rich-text runs. Callers using the push path must
+        have a Notion root page id configured at the workspace level.
+        """
+        body: dict[str, Any] = {
+            "parent": {"page_id": str(parent_page_id)},
+            "properties": {
+                "title": {
+                    "title": [
+                        {
+                            "type": "text",
+                            "text": {"content": str(title or "")},
+                        }
+                    ]
+                }
+            },
+            "children": list(blocks or []),
+        }
+        return self._request("POST", "/pages", body=body)
+
+    def update_page_blocks(
+        self,
+        page_id: str,
+        blocks: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Replace a page's body with ``blocks``.
+
+        "Replace" is deliberately simple: delete every existing child block
+        (server-side archive), then append the new set. This is the safest
+        correct behavior for the first cut — append-only would leak stale
+        content, and a diff-based update needs a proper markdown AST. A
+        future iteration can swap this for a diff or for the MCP
+        ``update_content`` semantic that updates specific substrings.
+        """
+        existing = self.get_blocks(page_id).get("blocks", [])
+        for block in existing:
+            block_id = block.get("id") if isinstance(block, dict) else None
+            if not block_id:
+                continue
+            try:
+                self._request("DELETE", f"/blocks/{block_id}")
+            except NotionAPIError:
+                # One failing block deletion should not abort the update;
+                # the append below still repopulates the page body.
+                continue
+        body = {"children": list(blocks or [])}
+        return self._request("PATCH", f"/blocks/{page_id}/children", body=body)
