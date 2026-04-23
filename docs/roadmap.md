@@ -64,10 +64,10 @@ Status: in progress
 
 - [x] Add a Notion-export adapter
 - [x] Add local markdown folder ingestion
-- [ ] Define a unified record model spec: required fields, source-specific metadata namespace, id stability rules
-- [ ] Document how adapters should populate `source.metadata` so downstream code never branches on `source.system`
+- [x] Define a unified record model spec: required fields, source-specific metadata namespace, id stability rules — `docs/record-model.md`
+- [x] Document how adapters should populate `source.metadata` so downstream code never branches on `source.system` — `docs/adapter-guide.md`
 
-Acceptance: a new adapter can be added without changing `context_graph_core` beyond registering a system name.
+Acceptance: a new adapter can be added without changing `context_graph_core` beyond registering a system name. (Met on paper; two known deviations flagged in `docs/adapter-guide.md`: `scripts/post_edit_reindex.py` and `scripts/context_graph_core.py::explicit_id_for_markdown_file` still branch on `source.system` and should be cleaned up.)
 
 ## Phase 4a - Live Notion sync
 
@@ -84,7 +84,7 @@ Goal: move beyond one-shot export ingestion to a live, bidirectional link with a
 - [x] Make `merge_record` order-aware by comparing `last_edited_time` so a stale replay (backfill, rewound cursor) cannot overwrite a newer record
 - [x] Rework `/cg-sync-notion` to orchestrate the **official Notion MCP** (`notion-search` + `notion-fetch`) so users do not have to create an internal integration or manage `NOTION_TOKEN` — the Python client remains as the headless fallback (see `docs/notion-sync.md`)
 - [ ] Delta/cursor support over the MCP path (`notion-search` does not expose a `last_edited_time` filter; for now `merge_record` handles idempotency but every sync refetches the full scope)
-- [ ] Extend Notion block-type coverage in the Python client fallback: `table`, `toggle`, `callout`, `column_list`, `link_to_page`, `image` (stubbed in `notion_markdown.py`)
+- [x] Extend Notion block-type coverage in the Python client fallback: `table`, `toggle`, `callout`, `column_list`, `link_to_page`, `image` — `scripts/notion_markdown.py` + `scripts/notion_sync.py::_maybe_hydrate_children`
 - [ ] Run live smoke-test and record fixtures for integration tests
 - [ ] Optional push: write promoted rules and decisions back to Notion (either via the Notion MCP `notion-create-pages` / `notion-update-page` or the Python client)
 
