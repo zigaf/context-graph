@@ -1,0 +1,515 @@
+from __future__ import annotations
+
+import json
+import sys
+from dataclasses import dataclass
+from typing import Any, Callable
+
+from context_graph_core import (
+    build_context_pack,
+    classify_record,
+    index_records,
+    infer_relations,
+    ingest_markdown,
+    ingest_notion_export,
+    promote_pattern,
+    search_graph,
+)
+
+
+PROTOCOL_VERSION = "2025-03-26"
+JSONRPC_VERSION = "2.0"
+
+
+PARSE_ERROR = -32700
+INVALID_REQUEST = -32600
+METHOD_NOT_FOUND = -32601
+INVALID_PARAMS = -32602
+INTERNAL_ERROR = -32603
+
+
+ToolHandler = Callable[[dict[str, Any]], dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    name: str
+    title: str
+    description: str
+    input_schema: dict[str, Any]
+    output_schema: dict[str, Any]
+    handler: ToolHandler
+
+
+def compact_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+
+
+def tool_result(payload: dict[str, Any], is_error: bool = False) -> dict[str, Any]:
+    return {
+        "content": [
+            {
+                "type": "text",
+                "text": json.dumps(payload, ensure_ascii=True, indent=2),
+            }
+        ],
+        "structuredContent": payload,
+        "isError": is_error,
+    }
+
+
+def require_object(arguments: Any) -> dict[str, Any]:
+    if arguments is None:
+        return {}
+    if not isinstance(arguments, dict):
+        raise ValueError("Tool arguments must be a JSON object.")
+    return arguments
+
+
+def handle_classify_record(arguments: dict[str, Any]) -> dict[str, Any]:
+    return classify_record(arguments)
+
+
+def handle_link_record(arguments: dict[str, Any]) -> dict[str, Any]:
+    if "record" not in arguments:
+        raise ValueError("Missing required field: record")
+    return infer_relations(arguments)
+
+
+def handle_build_context_pack(arguments: dict[str, Any]) -> dict[str, Any]:
+    return build_context_pack(arguments)
+
+
+def handle_index_records(arguments: dict[str, Any]) -> dict[str, Any]:
+    if "records" not in arguments:
+        raise ValueError("Missing required field: records")
+    if not isinstance(arguments["records"], list):
+        raise ValueError("records must be an array")
+    return index_records(arguments)
+
+
+def handle_search_graph(arguments: dict[str, Any]) -> dict[str, Any]:
+    return search_graph(arguments)
+
+
+def handle_promote_pattern(arguments: dict[str, Any]) -> dict[str, Any]:
+    return promote_pattern(arguments)
+
+
+def handle_ingest_markdown(arguments: dict[str, Any]) -> dict[str, Any]:
+    return ingest_markdown(arguments)
+
+
+def handle_ingest_notion_export(arguments: dict[str, Any]) -> dict[str, Any]:
+    return ingest_notion_export(arguments)
+
+
+TOOLS: list[ToolSpec] = [
+    ToolSpec(
+        name="classify_record",
+        title="Classify Record",
+        description="Normalize markers, infer missing fields from note text, and build a hierarchy path.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "record": {
+                    "type": "object",
+                    "description": "Record with title, content, markers, and optional source metadata.",
+                }
+            },
+            "required": ["record"],
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "title": {"type": "string"},
+                "markers": {"type": "object"},
+                "missingRequiredMarkers": {"type": "array"},
+                "hierarchy": {"type": "object"},
+            },
+            "required": ["id", "title", "markers", "missingRequiredMarkers", "hierarchy"],
+        },
+        handler=handle_classify_record,
+    ),
+    ToolSpec(
+        name="link_record",
+        title="Link Record",
+        description="Infer likely relations between one source record and candidate records.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "record": {"type": "object"},
+                "candidates": {"type": "array"},
+                "minScore": {"type": "number"},
+            },
+            "required": ["record", "candidates"],
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "record": {"type": "object"},
+                "inferredRelations": {"type": "array"},
+            },
+            "required": ["record", "inferredRelations"],
+        },
+        handler=handle_link_record,
+    ),
+    ToolSpec(
+        name="build_context_pack",
+        title="Build Context Pack",
+        description="Rank note records for a request and return a compact context pack with rules and unresolved risks.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "markers": {"type": "object"},
+                "records": {"type": "array"},
+                "limit": {"type": "number"},
+            },
+            "required": ["records"],
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "queryMarkers": {"type": "object"},
+                "directMatches": {"type": "array"},
+                "supportingRelations": {"type": "array"},
+                "promotedRules": {"type": "array"},
+                "unresolvedRisks": {"type": "array"},
+            },
+            "required": [
+                "queryMarkers",
+                "directMatches",
+                "supportingRelations",
+                "promotedRules",
+                "unresolvedRisks",
+            ],
+        },
+        handler=handle_build_context_pack,
+    ),
+    ToolSpec(
+        name="index_records",
+        title="Index Records",
+        description="Upsert normalized records into the local graph store and rebuild explicit and inferred edges.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "records": {"type": "array"},
+                "graphPath": {"type": "string"},
+            },
+            "required": ["records"],
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "graphPath": {"type": "string"},
+                "upsertedIds": {"type": "array"},
+                "recordCount": {"type": "number"},
+                "edgeCount": {"type": "number"},
+            },
+            "required": ["graphPath", "upsertedIds", "recordCount", "edgeCount"],
+        },
+        handler=handle_index_records,
+    ),
+    ToolSpec(
+        name="search_graph",
+        title="Search Graph",
+        description="Search the persisted graph index and return direct matches plus nearby graph edges.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "markers": {"type": "object"},
+                "graphPath": {"type": "string"},
+                "limit": {"type": "number"},
+            },
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "directMatches": {"type": "array"},
+                "supportingRelations": {"type": "array"},
+                "graphStats": {"type": "object"},
+                "graphPath": {"type": "string"},
+            },
+            "required": ["directMatches", "supportingRelations", "graphStats", "graphPath"],
+        },
+        handler=handle_search_graph,
+    ),
+    ToolSpec(
+        name="promote_pattern",
+        title="Promote Pattern",
+        description="Promote a cluster of related records into a reusable rule or decision record with derived links.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "recordIds": {"type": "array"},
+                "records": {"type": "array"},
+                "graphPath": {"type": "string"},
+                "title": {"type": "string"},
+                "outputType": {"type": "string"},
+                "writeToGraph": {"type": "boolean"},
+            },
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "promotedRecord": {"type": "object"},
+                "sourceRecords": {"type": "array"},
+                "sharedKeywords": {"type": "array"},
+                "commonMarkers": {"type": "object"},
+                "quality": {"type": "object"},
+                "splitSuggestions": {"type": "array"},
+            },
+            "required": ["promotedRecord", "sourceRecords", "sharedKeywords", "commonMarkers", "quality", "splitSuggestions"],
+        },
+        handler=handle_promote_pattern,
+    ),
+    ToolSpec(
+        name="ingest_markdown",
+        title="Ingest Markdown",
+        description="Scan a markdown file or directory, classify records from front matter and headings, and optionally index them.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "rootPath": {"type": "string"},
+                "path": {"type": "string"},
+                "pattern": {"type": "string"},
+                "recursive": {"type": "boolean"},
+                "index": {"type": "boolean"},
+                "graphPath": {"type": "string"},
+            },
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "rootPath": {"type": "string"},
+                "fileCount": {"type": "number"},
+                "recordIds": {"type": "array"},
+            },
+            "required": ["rootPath", "fileCount", "recordIds"],
+        },
+        handler=handle_ingest_markdown,
+    ),
+    ToolSpec(
+        name="ingest_notion_export",
+        title="Ingest Notion Export",
+        description="Scan a Notion markdown export, preserve page ids from filenames when available, resolve local page links, and optionally index the result.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "rootPath": {"type": "string"},
+                "path": {"type": "string"},
+                "pattern": {"type": "string"},
+                "recursive": {"type": "boolean"},
+                "index": {"type": "boolean"},
+                "graphPath": {"type": "string"},
+            },
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "rootPath": {"type": "string"},
+                "fileCount": {"type": "number"},
+                "recordIds": {"type": "array"},
+            },
+            "required": ["rootPath", "fileCount", "recordIds"],
+        },
+        handler=handle_ingest_notion_export,
+    ),
+]
+
+
+class MCPServer:
+    def __init__(self) -> None:
+        self.initialized = False
+        self.log_level = "info"
+        self.tools = {tool.name: tool for tool in TOOLS}
+
+    def send(self, message: dict[str, Any]) -> None:
+        sys.stdout.write(compact_json(message) + "\n")
+        sys.stdout.flush()
+
+    def send_error(self, request_id: Any, code: int, message: str, data: Any = None) -> None:
+        error = {"code": code, "message": message}
+        if data is not None:
+            error["data"] = data
+        self.send({"jsonrpc": JSONRPC_VERSION, "id": request_id, "error": error})
+
+    def send_result(self, request_id: Any, result: dict[str, Any]) -> None:
+        self.send({"jsonrpc": JSONRPC_VERSION, "id": request_id, "result": result})
+
+    def initialize_result(self) -> dict[str, Any]:
+        return {
+            "protocolVersion": PROTOCOL_VERSION,
+            "capabilities": {
+                "tools": {
+                    "listChanged": False,
+                }
+            },
+            "serverInfo": {
+                "name": "context-graph",
+                "version": "0.1.0",
+            },
+            "instructions": (
+                "Use Context Graph tools to classify records, infer relations, persist a local graph, "
+                "and retrieve compact context packs instead of loading full note collections."
+            ),
+        }
+
+    def list_tools_result(self) -> dict[str, Any]:
+        tools = []
+        for tool in TOOLS:
+            tools.append(
+                {
+                    "name": tool.name,
+                    "title": tool.title,
+                    "description": tool.description,
+                    "inputSchema": tool.input_schema,
+                    "outputSchema": tool.output_schema,
+                }
+            )
+        return {"tools": tools}
+
+    def call_tool(self, params: dict[str, Any]) -> dict[str, Any]:
+        name = params.get("name")
+        if not isinstance(name, str) or not name:
+            raise ValueError("Missing or invalid tool name.")
+        tool = self.tools.get(name)
+        if not tool:
+            raise KeyError(name)
+        arguments = require_object(params.get("arguments"))
+        return tool.handler(arguments)
+
+    def handle_request(self, message: dict[str, Any]) -> dict[str, Any] | None:
+        if message.get("jsonrpc") != JSONRPC_VERSION:
+            request_id = message.get("id")
+            if request_id is not None:
+                self.send_error(request_id, INVALID_REQUEST, "jsonrpc must be '2.0'.")
+            return None
+
+        method = message.get("method")
+        is_request = "id" in message
+        request_id = message.get("id")
+        params = message.get("params", {})
+        if params is None:
+            params = {}
+        if not isinstance(params, dict):
+            if is_request:
+                self.send_error(request_id, INVALID_PARAMS, "params must be an object when provided.")
+            return None
+
+        if not isinstance(method, str):
+            if is_request:
+                self.send_error(request_id, INVALID_REQUEST, "method must be a string.")
+            return None
+
+        if method == "initialize":
+            if not is_request:
+                return None
+            self.send_result(request_id, self.initialize_result())
+            return None
+
+        if method == "notifications/initialized":
+            self.initialized = True
+            return None
+
+        if method == "ping":
+            if is_request:
+                self.send_result(request_id, {})
+            return None
+
+        if method == "logging/setLevel":
+            self.log_level = str(params.get("level") or "info")
+            if is_request:
+                self.send_result(request_id, {})
+            return None
+
+        if method == "notifications/cancelled":
+            return None
+
+        if method == "tools/list":
+            if not is_request:
+                return None
+            self.send_result(request_id, self.list_tools_result())
+            return None
+
+        if method == "tools/call":
+            if not is_request:
+                return None
+            try:
+                payload = self.call_tool(params)
+            except KeyError as exc:
+                self.send_error(request_id, INVALID_PARAMS, f"Unknown tool: {exc.args[0]}")
+                return None
+            except ValueError as exc:
+                self.send_result(request_id, tool_result({"error": str(exc)}, is_error=True))
+                return None
+            except Exception as exc:  # pragma: no cover - defensive boundary
+                self.send_result(
+                    request_id,
+                    tool_result(
+                        {
+                            "error": "Tool execution failed.",
+                            "details": str(exc),
+                        },
+                        is_error=True,
+                    ),
+                )
+                return None
+            self.send_result(request_id, tool_result(payload))
+            return None
+
+        if is_request:
+            self.send_error(request_id, METHOD_NOT_FOUND, f"Method not found: {method}")
+        return None
+
+    def handle_message(self, raw: str) -> None:
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            self.send_error(None, PARSE_ERROR, f"Invalid JSON: {exc.msg}")
+            return
+
+        if isinstance(parsed, list):
+            if not parsed:
+                self.send_error(None, INVALID_REQUEST, "Batch request must not be empty.")
+                return
+            for item in parsed:
+                if isinstance(item, dict):
+                    self.handle_request(item)
+                else:
+                    self.send_error(None, INVALID_REQUEST, "Each batch item must be an object.")
+            return
+
+        if not isinstance(parsed, dict):
+            self.send_error(None, INVALID_REQUEST, "Request must be a JSON object.")
+            return
+
+        self.handle_request(parsed)
+
+    def serve(self) -> int:
+        for line in sys.stdin:
+            raw = line.strip()
+            if not raw:
+                continue
+            self.handle_message(raw)
+        return 0
+
+
+def main() -> int:
+    server = MCPServer()
+    return server.serve()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

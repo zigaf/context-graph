@@ -1,0 +1,52 @@
+{
+  "name": "context-graph",
+  "version": "0.1.0",
+  "description": "Builds structured context graphs from notes using normalized markers, hierarchical paths, and explicit or inferred relations.",
+  "author": {
+    "name": "Context Graph Contributors",
+    "email": "maintainers@example.com",
+    "url": "https://example.com/context-graph"
+  },
+  "homepage": "https://example.com/context-graph",
+  "repository": "https://example.com/context-graph/repository",
+  "license": "MIT",
+  "keywords": [
+    "context",
+    "knowledge-graph",
+    "retrieval",
+    "taxonomy",
+    "notes"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks.json",
+  "mcpServers": "./.mcp.json",
+  "apps": "./.app.json",
+  "interface": {
+    "displayName": "Context Graph",
+    "shortDescription": "Classify notes, link related records, and fetch only the context needed for the current task.",
+    "longDescription": "Context Graph turns notes into a navigable graph with normalized markers, hierarchy paths, and explicit or inferred relations. It is designed to reduce prompt noise and improve retrieval quality by selecting compact, task-specific context packs instead of dumping whole knowledge bases.",
+    "developerName": "Context Graph Contributors",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write",
+      "Search"
+    ],
+    "websiteURL": "https://example.com/context-graph",
+    "privacyPolicyURL": "https://example.com/context-graph/privacy",
+    "termsOfServiceURL": "https://example.com/context-graph/terms",
+    "defaultPrompt": [
+      "Classify these notes with normalized markers and add missing hierarchy paths.",
+      "Build a compact context pack for this task using direct and one-hop related records.",
+      "Find repeated patterns across incidents and promote them into reusable rules."
+    ],
+    "brandColor": "#0F766E",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/logo.png",
+    "screenshots": [
+      "./assets/screenshot1.png",
+      "./assets/screenshot2.png",
+      "./assets/screenshot3.png"
+    ]
+  }
+}

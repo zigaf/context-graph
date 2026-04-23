@@ -1,0 +1,154 @@
+{
+  "version": "0.1.0",
+  "record": {
+    "requiredMarkers": [
+      "type",
+      "domain",
+      "goal",
+      "status"
+    ],
+    "optionalMarkers": [
+      "project",
+      "room",
+      "flow",
+      "artifact",
+      "severity",
+      "scope",
+      "owner"
+    ]
+  },
+  "markers": {
+    "type": [
+      "task",
+      "bug",
+      "debug",
+      "research",
+      "decision",
+      "rule",
+      "architecture",
+      "incident",
+      "spec"
+    ],
+    "goal": [
+      "fix-bug",
+      "prevent-regression",
+      "optimize-performance",
+      "stabilize-flow",
+      "document-behavior",
+      "clarify-scope"
+    ],
+    "status": [
+      "new",
+      "in-progress",
+      "done",
+      "known-risk",
+      "fixed",
+      "archived"
+    ],
+    "severity": [
+      "critical",
+      "high",
+      "medium",
+      "low"
+    ],
+    "domain": [
+      "payments",
+      "auth",
+      "kyc",
+      "risk",
+      "trading",
+      "integration",
+      "ui",
+      "data"
+    ],
+    "flow": [
+      "deposit",
+      "withdrawal",
+      "signup",
+      "verification",
+      "webhook",
+      "checkout",
+      "sync",
+      "notification"
+    ],
+    "artifact": [
+      "endpoint",
+      "job",
+      "webhook",
+      "ui-modal",
+      "migration",
+      "model",
+      "service",
+      "document"
+    ]
+  },
+  "aliases": {
+    "type": {
+      "bug": ["issue", "defect", "failure"],
+      "debug": ["investigation", "root-cause"],
+      "decision": ["adr", "tradeoff"],
+      "rule": ["invariant", "guardrail"]
+    },
+    "goal": {
+      "fix-bug": ["bugfix", "resolve-issue"],
+      "prevent-regression": ["hardening", "guard-against-regression"],
+      "optimize-performance": ["performance", "speed-up"],
+      "stabilize-flow": ["stability", "reliability"],
+      "document-behavior": ["documentation", "write-docs"]
+    },
+    "status": {
+      "in-progress": ["active", "wip"],
+      "known-risk": ["risk", "open-risk"],
+      "done": ["completed", "closed"],
+      "fixed": ["resolved"]
+    },
+    "domain": {
+      "payments": ["payment", "billing", "money"],
+      "auth": ["authentication", "login", "otp"],
+      "kyc": ["compliance", "identity"],
+      "ui": ["frontend", "ux", "interface"],
+      "integration": ["provider", "third-party", "psp"]
+    },
+    "flow": {
+      "deposit": ["topup", "cashin", "funding"],
+      "withdrawal": ["cashout", "payout"],
+      "verification": ["kyc-check", "review"],
+      "webhook": ["callback"]
+    },
+    "artifact": {
+      "endpoint": ["api", "route", "handler"],
+      "job": ["worker", "queue", "cron"],
+      "ui-modal": ["modal", "dialog"],
+      "service": ["module", "component"]
+    }
+  },
+  "relations": {
+    "explicit": [
+      "affects",
+      "caused_by",
+      "fixes",
+      "depends_on",
+      "duplicates",
+      "overrides",
+      "belongs_to",
+      "parent_of",
+      "same_pattern_as",
+      "derived_from",
+      "related_to"
+    ],
+    "inferred": [
+      "might_affect",
+      "might_depend_on",
+      "related_pattern"
+    ]
+  },
+  "hierarchy": {
+    "preferredOrder": [
+      "project",
+      "domain",
+      "flow",
+      "artifact"
+    ],
+    "pathSeparator": " > "
+  }
+}

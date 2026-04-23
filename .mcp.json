@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "context-graph": {
+      "command": "python3",
+      "args": [
+        "./scripts/context_graph_mcp.py"
+      ],
+      "cwd": "."
+    }
+  }
+}

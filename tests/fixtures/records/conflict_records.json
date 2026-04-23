@@ -1,0 +1,30 @@
+[
+  {
+    "id": "a",
+    "title": "Webhook idempotency bug",
+    "content": "Duplicate callback handling in payments",
+    "markers": {
+      "type": "bug",
+      "domain": "payments",
+      "flow": "webhook",
+      "goal": "stabilize-flow",
+      "status": "in-progress",
+      "severity": "critical",
+      "artifact": "endpoint"
+    }
+  },
+  {
+    "id": "b",
+    "title": "Webhook retry rule",
+    "content": "Prevent duplicate side effects in callbacks",
+    "markers": {
+      "type": "rule",
+      "domain": "payments",
+      "flow": "webhook",
+      "goal": "prevent-regression",
+      "status": "done",
+      "severity": "high",
+      "artifact": "service"
+    }
+  }
+]

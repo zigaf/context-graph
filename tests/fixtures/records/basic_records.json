@@ -1,0 +1,30 @@
+[
+  {
+    "id": "r1",
+    "title": "Critical webhook bug in deposit flow",
+    "content": "Duplicate payment creation after callback retry",
+    "markers": {
+      "type": "bug",
+      "domain": "payments",
+      "flow": "webhook",
+      "artifact": "endpoint",
+      "goal": "stabilize-flow",
+      "status": "in-progress",
+      "severity": "critical"
+    }
+  },
+  {
+    "id": "r2",
+    "title": "Retry-safe webhook design for deposit callbacks",
+    "content": "Adds idempotency guard for payment callback duplicates",
+    "markers": {
+      "type": "rule",
+      "domain": "payments",
+      "flow": "webhook",
+      "artifact": "service",
+      "goal": "prevent-regression",
+      "status": "done",
+      "severity": "high"
+    }
+  }
+]

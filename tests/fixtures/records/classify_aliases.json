@@ -1,0 +1,9 @@
+{
+  "title": "Critical webhook issue in payment flow",
+  "content": "A payment callback retry can duplicate money movements.",
+  "markers": {
+    "status": "active",
+    "goal": "stability",
+    "severity": "critical"
+  }
+}
