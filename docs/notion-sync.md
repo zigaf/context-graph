@@ -7,12 +7,21 @@ against each other and against the offline `ingest_notion_export` adapter.
 ## Path A — via the official Notion MCP (default, no API key)
 
 The `/cg-sync-notion <scope>` slash command orchestrates the official Notion
-MCP. Claude calls `notion-search` to discover pages in scope, `notion-fetch` to
-pull content, builds Context Graph records, and hands them to
-`mcp__context-graph__index_records` in one batch. Auth flows through whatever
-OAuth login the user did when they connected the Notion MCP — the plugin never
-sees a token and Notion pages do not need a per-integration "Add connection"
-step.
+MCP. Claude calls `notion-search` to discover pages in scope, then
+`mcp__context-graph__filter_pages_by_cursor` to drop pages whose
+`last_edited_time` is already covered by the stored cursor, then
+`notion-fetch` for only the fresh remainder, builds Context Graph records,
+and hands them to `mcp__context-graph__index_records` in one batch. Auth
+flows through whatever OAuth login the user did when they connected the
+Notion MCP — the plugin never sees a token and Notion pages do not need a
+per-integration "Add connection" step.
+
+The cursor is read via `mcp__context-graph__load_notion_cursor` at the start
+of the run and advanced via `mcp__context-graph__save_notion_cursor` at the
+end — so the slash command is cursor-aware without needing to touch the
+filesystem directly. Pass `--full` to `/cg-sync-notion` to force a clean
+refetch that ignores the stored cursor for filtering (but still saves the
+advanced cursor on success).
 
 This path runs **only during a live Claude session** (the LLM is the glue).
 For crons, CI, or headless scripts, use Path B.
@@ -72,25 +81,31 @@ adapter and verifies that the live sync merges into the same entry.
 
 ## Cursor mechanics
 
-- Storage location: `data/notion_cursor.json` by default (override via
-  `cursorPath`).
-- Format: `{"cursor": "<ISO-8601 last_edited_time>"}`.
+- Storage location: `.context-graph/notion_cursor.json` under the workspace
+  root by default (override via `cursorPath`).
+- Format: a flat mapping of `page_id -> last_edited_time` (ISO-8601), e.g.
+  `{"aaaaaaaa-aaaa-...": "2026-04-22T10:00:00.000Z", ...}`. An absent key
+  means "never seen" and the page is treated as fresh.
 - Parent directory is created on first write.
+- The same schema is consumed by both the Path A (MCP) and Path B (Python)
+  adapters via the core helpers `load_notion_cursor`, `save_notion_cursor`,
+  `cursor_is_fresh`, and `update_cursor` (see `scripts/context_graph_core.py`).
 
-Resolution order for the effective cursor on each run:
+Filtering rule for each page on a run:
 
-1. `payload.since` if provided.
-2. Contents of `cursorPath` if the file exists and contains a valid `cursor`
-   string.
-3. `None` (full pull).
+1. If `payload.since` is set, treat the cursor as if every page had
+   last-seen = `since` and then apply rule 2.
+2. A page is **fresh** (fetched and indexed) when its `last_edited_time` is
+   strictly greater than `cursor.get(page.id, "")`. Stale pages are skipped
+   before any block fetch.
 
-On a successful sync that pulls at least one record, the cursor file is
-overwritten with the **max** `last_edited_time` across the pulled batch.
+On a successful sync, the cursor is advanced in-place: each fresh page's
+entry is set to its new `last_edited_time`. Entries for pages outside the
+current scope are left untouched, so per-scope syncs compose.
 
 If zero pages pass the cursor filter, `sync_notion` returns
 `noChangesSince=True`, does not call `index_records`, and leaves the cursor
-file untouched (the response still echoes the existing cursor value under
-`newCursor`).
+file untouched (`newCursor` in the response is `None`).
 
 Pagination is handled internally: `list_database_pages` / `list_child_pages` and
 `get_blocks` loop until `has_more` is false or a falsy `next_cursor` is

@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
@@ -13,9 +12,11 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 from context_graph_core import (  # noqa: E402
     classify_record,
+    cursor_is_fresh,
     default_graph_path,
     index_records,
     notion_cursor_path,
+    update_cursor,
 )
 
 
@@ -27,33 +28,35 @@ def _normalize_notion_id(raw_id: str) -> str:
     return str(raw_id).replace("-", "").lower()
 
 
-def _parse_iso(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
+def _read_cursor_file(cursor_path: Path) -> dict[str, Any]:
+    """Read the per-page cursor dict from an explicit file path.
 
-
-def _read_cursor(cursor_path: Path) -> str | None:
+    The in-core helpers (`load_notion_cursor`) resolve paths from a workspace
+    root, but the Python fallback also accepts an arbitrary `cursorPath`
+    override (used by tests and by scheduled-job callers who don't live inside
+    a workspace). This helper handles that explicit-path case using the same
+    on-disk contract as `load_notion_cursor`.
+    """
     if not cursor_path.exists():
-        return None
+        return {}
     try:
         with cursor_path.open("r", encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
-        return None
-    if isinstance(data, dict):
-        cursor = data.get("cursor")
-        return str(cursor) if cursor else None
-    return None
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return data
 
 
-def _write_cursor(cursor_path: Path, cursor_value: str) -> None:
+def _write_cursor_file(cursor_path: Path, cursor: dict[str, Any]) -> None:
+    """Persist the per-page cursor dict to an explicit file path.
+
+    Parallels `save_notion_cursor` for the arbitrary-path override case.
+    """
     cursor_path.parent.mkdir(parents=True, exist_ok=True)
     with cursor_path.open("w", encoding="utf-8") as f:
-        json.dump({"cursor": cursor_value}, f, ensure_ascii=True, indent=2)
+        json.dump(cursor, f, ensure_ascii=True, indent=2)
         f.write("\n")
 
 
@@ -205,6 +208,27 @@ def _build_record(
     }
 
 
+def _apply_since_floor(cursor: dict[str, Any], pages: list[dict[str, Any]], since: str) -> dict[str, Any]:
+    """Merge a `since` floor into the cursor.
+
+    When the caller passes an explicit `since` (ISO-8601), every page listed is
+    treated as "last seen at >= since" — so `cursor_is_fresh` will only keep
+    pages whose `last_edited_time` is strictly greater than `since`. This
+    preserves the legacy global-cursor semantics on top of the per-page store.
+    """
+    merged = dict(cursor)
+    since_str = str(since)
+    for page in pages:
+        page_id = page.get("id")
+        if not page_id:
+            continue
+        key = str(page_id)
+        existing = merged.get(key, "")
+        if since_str > str(existing or ""):
+            merged[key] = since_str
+    return merged
+
+
 def sync_notion(payload: dict[str, Any], schema: dict[str, Any] | None = None) -> dict[str, Any]:
     payload = dict(payload or {})
 
@@ -228,10 +252,7 @@ def sync_notion(payload: dict[str, Any], schema: dict[str, Any] | None = None) -
     cursor_path_input = payload.get("cursorPath")
     cursor_path = Path(str(cursor_path_input)) if cursor_path_input else _default_cursor_path()
 
-    since = payload.get("since")
-    stored_cursor = _read_cursor(cursor_path)
-    effective_cursor_raw = since if since else stored_cursor
-    cursor_dt = _parse_iso(effective_cursor_raw) if effective_cursor_raw else None
+    stored_cursor = _read_cursor_file(cursor_path)
 
     client_factory = payload.get("clientFactory") or _lazy_default_client_factory()
     markdown_converter = payload.get("markdownConverter") or _lazy_default_markdown_converter()
@@ -240,28 +261,29 @@ def sync_notion(payload: dict[str, Any], schema: dict[str, Any] | None = None) -
 
     all_pages = _collect_pages(client, database_id, parent_page_id)
 
-    if cursor_dt is not None:
-        filtered_pages: list[dict[str, Any]] = []
-        for page in all_pages:
-            page_dt = _parse_iso(page.get("last_edited_time"))
-            if page_dt is None or page_dt > cursor_dt:
-                filtered_pages.append(page)
-    else:
-        filtered_pages = list(all_pages)
+    # `since` is a legacy global floor that overrides the per-page cursor for
+    # this run. Merge it into an effective cursor so the pure `cursor_is_fresh`
+    # helper can enforce the same semantics uniformly.
+    since = payload.get("since")
+    effective_cursor = (
+        _apply_since_floor(stored_cursor, all_pages, str(since)) if since else stored_cursor
+    )
+
+    filtered_pages = [page for page in all_pages if cursor_is_fresh(page, effective_cursor)]
 
     if not filtered_pages:
         return {
             "pagesPulled": 0,
             "recordIds": [],
-            "newCursor": stored_cursor,
+            "newCursor": None,
             "indexResult": None,
             "noChangesSince": True,
             "fallbackCount": 0,
         }
 
     records: list[dict[str, Any]] = []
+    advanced_cursor = dict(stored_cursor)
     latest_iso: str | None = None
-    latest_dt: datetime | None = None
 
     for page in filtered_pages:
         page_id = str(page.get("id") or "")
@@ -272,16 +294,16 @@ def sync_notion(payload: dict[str, Any], schema: dict[str, Any] | None = None) -
         record = _build_record(page, title, content, extra_metadata)
         records.append(record)
 
-        page_dt = _parse_iso(page.get("last_edited_time"))
-        if page_dt is not None and (latest_dt is None or page_dt > latest_dt):
-            latest_dt = page_dt
-            latest_iso = str(page.get("last_edited_time"))
+        advanced_cursor = update_cursor(advanced_cursor, page)
+        last_edited = page.get("last_edited_time")
+        if isinstance(last_edited, str) and (latest_iso is None or last_edited > latest_iso):
+            latest_iso = last_edited
 
     if not records:
         return {
             "pagesPulled": 0,
             "recordIds": [],
-            "newCursor": stored_cursor,
+            "newCursor": None,
             "indexResult": None,
             "noChangesSince": True,
             "fallbackCount": 0,
@@ -315,21 +337,13 @@ def sync_notion(payload: dict[str, Any], schema: dict[str, Any] | None = None) -
             schema,
         )
 
-    new_cursor_to_persist: str | None
-    if latest_iso:
-        new_cursor_to_persist = latest_iso
-    elif latest_dt is not None:
-        new_cursor_to_persist = latest_dt.astimezone(timezone.utc).isoformat()
-    else:
-        new_cursor_to_persist = None
-
-    if new_cursor_to_persist:
-        _write_cursor(cursor_path, new_cursor_to_persist)
+    if advanced_cursor != stored_cursor:
+        _write_cursor_file(cursor_path, advanced_cursor)
 
     return {
         "pagesPulled": len(records),
         "recordIds": [record["id"] for record in records],
-        "newCursor": new_cursor_to_persist,
+        "newCursor": latest_iso,
         "indexResult": index_result,
         "noChangesSince": False,
         "fallbackCount": fallback_count,

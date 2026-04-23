@@ -142,7 +142,11 @@ class NotionSyncTests(unittest.TestCase):
             self.assertEqual(result["newCursor"], "2026-04-23T08:30:00.000Z")
             with open(cursor_path, "r", encoding="utf-8") as f:
                 persisted = json.load(f)
-            self.assertEqual(persisted["cursor"], "2026-04-23T08:30:00.000Z")
+            # Per-page cursor schema: {<raw-page-id>: <iso>}.
+            page_a_raw_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+            page_b_raw_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+            self.assertEqual(persisted[page_a_raw_id], "2026-04-22T10:00:00.000Z")
+            self.assertEqual(persisted[page_b_raw_id], "2026-04-23T08:30:00.000Z")
 
     def test_cursor_at_latest_reports_no_changes_and_does_not_reindex(self):
         scenario = load_scenario("pages_two.json")
@@ -153,8 +157,16 @@ class NotionSyncTests(unittest.TestCase):
             graph_path = str(Path(tmpdir) / "graph.json")
             cursor_path = Path(tmpdir) / "notion_cursor.json"
 
+            # Pre-seed a per-page cursor already at-or-after each page's last_edited_time.
+            page_a_raw_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+            page_b_raw_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
             cursor_path.write_text(
-                json.dumps({"cursor": "2026-04-24T00:00:00.000Z"}),
+                json.dumps(
+                    {
+                        page_a_raw_id: "2026-04-24T00:00:00.000Z",
+                        page_b_raw_id: "2026-04-24T00:00:00.000Z",
+                    }
+                ),
                 encoding="utf-8",
             )
             cursor_mtime_before = cursor_path.stat().st_mtime_ns
@@ -176,7 +188,8 @@ class NotionSyncTests(unittest.TestCase):
             self.assertEqual(result["pagesPulled"], 0)
             self.assertEqual(result["recordIds"], [])
             self.assertIsNone(result["indexResult"])
-            self.assertEqual(result["newCursor"], "2026-04-24T00:00:00.000Z")
+            # On no-op sync, `newCursor` is None — nothing new was pulled.
+            self.assertIsNone(result["newCursor"])
 
             self.assertEqual(cursor_path.read_text(encoding="utf-8"), cursor_content_before)
             self.assertEqual(cursor_path.stat().st_mtime_ns, cursor_mtime_before)
@@ -262,6 +275,65 @@ class NotionSyncTests(unittest.TestCase):
             self.assertEqual(record["source"]["system"], "notion")
             # Revision version should have bumped from the merge.
             self.assertGreaterEqual(record["revision"].get("version", 1), 2)
+
+    def test_per_page_cursor_skips_only_stale_pages(self):
+        # Regression: when one page is already at-cursor and another is newer,
+        # the newer page is fetched and indexed while the older one is skipped
+        # before the block fetch call — no wasted `get_blocks` for stale pages.
+        scenario = load_scenario("pages_two.json")
+        client_factory = make_client_factory(scenario)
+        markdown_converter = make_markdown_converter(scenario)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            graph_path = str(Path(tmpdir) / "graph.json")
+            cursor_path = Path(tmpdir) / "notion_cursor.json"
+
+            page_a_raw_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+            page_b_raw_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+            # Page A is already synced up to its current last_edited_time.
+            # Page B has a newer last_edited_time than what the cursor records.
+            cursor_path.write_text(
+                json.dumps(
+                    {
+                        page_a_raw_id: "2026-04-22T10:00:00.000Z",
+                        page_b_raw_id: "2026-04-22T00:00:00.000Z",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            result = sync_notion(
+                {
+                    "databaseId": "db-1",
+                    "graphPath": graph_path,
+                    "cursorPath": str(cursor_path),
+                    "clientFactory": client_factory,
+                    "markdownConverter": markdown_converter,
+                }
+            )
+
+            self.assertEqual(result["pagesPulled"], 1)
+            self.assertEqual(
+                result["recordIds"],
+                ["notion:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"],
+            )
+            self.assertFalse(result["noChangesSince"])
+            self.assertEqual(result["newCursor"], "2026-04-23T08:30:00.000Z")
+
+            # No block fetch for page A — it was filtered before any fetch call.
+            fetched_block_pages = [
+                call[1][0]
+                for call in client_factory.created[0].calls
+                if call[0] == "get_blocks"
+            ]
+            self.assertNotIn(page_a_raw_id, fetched_block_pages)
+            self.assertIn(page_b_raw_id, fetched_block_pages)
+
+            # Cursor advances only for the fresh page; page A's entry is preserved.
+            with cursor_path.open("r", encoding="utf-8") as f:
+                persisted = json.load(f)
+            self.assertEqual(persisted[page_a_raw_id], "2026-04-22T10:00:00.000Z")
+            self.assertEqual(persisted[page_b_raw_id], "2026-04-23T08:30:00.000Z")
 
     def test_missing_notion_token_raises_value_error(self):
         os.environ.pop("NOTION_TOKEN", None)
