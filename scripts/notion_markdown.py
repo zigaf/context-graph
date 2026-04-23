@@ -5,6 +5,14 @@ types the sync pipeline most commonly ingests and ignores unknown block
 kinds rather than failing. Rich-text annotations are rendered as inline
 markdown for bold, italic, inline code, and links. All other annotations
 fall back to plain text.
+
+Nested block children (``table_row`` under ``table``, the body of a
+``toggle`` / ``callout``, the blocks inside a ``column`` / ``column_list``)
+are expected to be pre-fetched and attached to their parent block under
+the key ``_children``. The collector in ``scripts/notion_sync.py`` is
+responsible for populating that key via the Notion REST API; the
+renderer here treats ``_children`` as an optional list of sibling blocks
+and simply renders them recursively.
 """
 
 from __future__ import annotations
@@ -53,6 +61,135 @@ def _block_text(block: dict[str, Any]) -> str:
     return _rich_text_to_markdown(payload.get("rich_text"))
 
 
+def _children(block: dict[str, Any]) -> list[dict[str, Any]]:
+    raw = block.get("_children")
+    if isinstance(raw, list):
+        return [item for item in raw if isinstance(item, dict)]
+    return []
+
+
+def _render_children(block: dict[str, Any]) -> str:
+    rendered: list[tuple[str, str]] = []
+    for child in _children(block):
+        text = _render_block(child)
+        if text is None:
+            continue
+        rendered.append((str(child.get("type") or ""), text))
+    return _join_blocks(rendered)
+
+
+def _escape_cell(text: str) -> str:
+    # Pipes inside GFM cells must be escaped. Newlines would break the
+    # single-line cell contract, so collapse them too.
+    return text.replace("\\", "\\\\").replace("|", "\\|").replace("\n", " ")
+
+
+def _render_table(block: dict[str, Any]) -> str | None:
+    payload = block.get("table") or {}
+    rows = [
+        child for child in _children(block) if child.get("type") == "table_row"
+    ]
+    if not rows:
+        return ""
+    width = int(payload.get("table_width") or 0) or max(
+        len((row.get("table_row") or {}).get("cells") or []) for row in rows
+    )
+    if width <= 0:
+        return ""
+
+    def _row_cells(row: dict[str, Any]) -> list[str]:
+        cells = (row.get("table_row") or {}).get("cells") or []
+        rendered: list[str] = []
+        for idx in range(width):
+            runs = cells[idx] if idx < len(cells) else []
+            rendered.append(_escape_cell(_rich_text_to_markdown(runs)))
+        return rendered
+
+    def _format_row(cells: list[str]) -> str:
+        return "| " + " | ".join(cells) + " |"
+
+    lines: list[str] = []
+    has_column_header = bool(payload.get("has_column_header"))
+    if has_column_header:
+        header_cells = _row_cells(rows[0])
+        body_rows = rows[1:]
+    else:
+        header_cells = [""] * width
+        body_rows = rows
+    lines.append(_format_row(header_cells))
+    lines.append(_format_row(["---"] * width))
+    for row in body_rows:
+        lines.append(_format_row(_row_cells(row)))
+    return "\n".join(lines)
+
+
+def _render_toggle(block: dict[str, Any]) -> str:
+    summary = _block_text(block)
+    body = _render_children(block)
+    if body:
+        return f"<details><summary>{summary}</summary>\n\n{body}\n\n</details>"
+    return f"<details><summary>{summary}</summary>\n\n</details>"
+
+
+def _render_callout(block: dict[str, Any]) -> str:
+    payload = block.get("callout") or {}
+    text = _rich_text_to_markdown(payload.get("rich_text"))
+    icon = payload.get("icon") or {}
+    emoji = icon.get("emoji") if isinstance(icon, dict) else None
+    head = f"{emoji} {text}".strip() if emoji else text
+    header_line = f"> {head}" if head else ">"
+    body = _render_children(block)
+    if not body:
+        return header_line
+    continuation: list[str] = [header_line]
+    for line in body.splitlines():
+        continuation.append(f"> {line}" if line else ">")
+    return "\n".join(continuation)
+
+
+def _render_column_container(block: dict[str, Any]) -> str:
+    # ``column_list`` and ``column`` are layout wrappers — flatten their
+    # children inline. Child columns (inside a column_list) are separated
+    # by a blank line so each column's content stays a distinct paragraph.
+    return _render_children(block)
+
+
+def _render_link_to_page(block: dict[str, Any]) -> str | None:
+    payload = block.get("link_to_page") or {}
+    link_type = str(payload.get("type") or "").strip()
+    target_id: str | None = None
+    if link_type:
+        target_id = payload.get(link_type)
+    if not target_id:
+        return None
+    normalized = str(target_id).replace("-", "")
+    if not normalized:
+        return None
+    return f"[Untitled](notion://{normalized})"
+
+
+def _render_image(block: dict[str, Any]) -> str | None:
+    payload = block.get("image") or {}
+    image_type = str(payload.get("type") or "").strip()
+    url: str | None = None
+    if image_type:
+        holder = payload.get(image_type) or {}
+        if isinstance(holder, dict):
+            url = holder.get("url")
+    if not url:
+        # Fall back to whichever holder carries a url so we tolerate
+        # payloads with an unexpected ``type`` value.
+        for key in ("file", "external"):
+            holder = payload.get(key) or {}
+            if isinstance(holder, dict) and holder.get("url"):
+                url = holder["url"]
+                break
+    if not url:
+        return None
+    alt = _rich_text_to_markdown(payload.get("caption"))
+    return f"![{alt}]({url})"
+
+
 def _render_block(block: dict[str, Any]) -> str | None:
     block_type = block.get("type")
     if not block_type:
@@ -94,12 +231,23 @@ def _render_block(block: dict[str, Any]) -> str | None:
         if child_id:
             return f"- [{title}](notion://{child_id})"
         return f"- {title}"
+    if block_type == "table":
+        return _render_table(block)
+    if block_type == "toggle":
+        return _render_toggle(block)
+    if block_type == "callout":
+        return _render_callout(block)
+    if block_type in {"column_list", "column"}:
+        return _render_column_container(block)
+    if block_type == "link_to_page":
+        return _render_link_to_page(block)
+    if block_type == "image":
+        return _render_image(block)
 
     # Unknown block type — render nothing but do not crash.
-    # TODO: extend support for: table, table_row, toggle, callout,
-    #   image, bookmark, embed, file, equation, column, column_list,
+    # TODO: extend support for: bookmark, embed, file, equation,
     #   synced_block, template, breadcrumb, table_of_contents,
-    #   link_preview, link_to_page.
+    #   link_preview.
     return None
 
 

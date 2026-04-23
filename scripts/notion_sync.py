@@ -96,6 +96,63 @@ def _collect_pages(
     return pages
 
 
+# Block types whose rendered output depends on nested children
+# (table rows, toggle body, callout body, column layout). For these we
+# recursively fetch and attach the children under ``_children`` so the
+# markdown converter can render the full tree without further API
+# access.
+_CHILD_BEARING_BLOCK_TYPES = {
+    "table",
+    "toggle",
+    "callout",
+    "column_list",
+    "column",
+}
+
+
+def _fetch_block_page(
+    client: Any, block_id: str, cursor: str | None
+) -> dict[str, Any]:
+    # ``get_blocks`` is the shared envelope from ``notion_client``. The
+    # same endpoint (``/blocks/{id}/children``) serves both page
+    # top-level children and nested block children, so we reuse it here.
+    return client.get_blocks(block_id, cursor=cursor)
+
+
+def _collect_block_children(client: Any, block_id: str) -> list[dict[str, Any]]:
+    children: list[dict[str, Any]] = []
+    cursor: str | None = None
+    while True:
+        response = _fetch_block_page(client, block_id, cursor)
+        children.extend(response.get("blocks", []) or [])
+        if not response.get("has_more"):
+            break
+        cursor = response.get("next_cursor")
+        if not cursor:
+            break
+    for child in children:
+        _maybe_hydrate_children(client, child)
+    return children
+
+
+def _maybe_hydrate_children(client: Any, block: dict[str, Any]) -> None:
+    if not isinstance(block, dict):
+        return
+    block_type = block.get("type")
+    if block_type not in _CHILD_BEARING_BLOCK_TYPES:
+        return
+    if not block.get("has_children", False):
+        # Notion marks blocks that actually have children. Trust the
+        # flag to avoid an extra request for empty tables/toggles.
+        block.setdefault("_children", [])
+        return
+    block_id = block.get("id")
+    if not block_id:
+        block.setdefault("_children", [])
+        return
+    block["_children"] = _collect_block_children(client, str(block_id))
+
+
 def _collect_blocks(client: Any, page_id: str) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = []
     cursor: str | None = None
@@ -107,6 +164,8 @@ def _collect_blocks(client: Any, page_id: str) -> list[dict[str, Any]]:
         cursor = response.get("next_cursor")
         if not cursor:
             break
+    for block in blocks:
+        _maybe_hydrate_children(client, block)
     return blocks
 
 

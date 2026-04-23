@@ -246,7 +246,7 @@ class PageToMarkdownTests(unittest.TestCase):
             },
         }
         blocks = [
-            {"type": "table", "table": {}},
+            {"type": "bookmark", "bookmark": {"url": "https://example.com"}},
             {"type": "paragraph", "paragraph": {"rich_text": [
                 {"plain_text": "kept", "annotations": {}, "text": {"content": "kept"}}
             ]}},
