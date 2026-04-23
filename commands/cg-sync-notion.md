@@ -9,11 +9,14 @@ Scope: `$ARGUMENTS`. If empty, ask the user to narrow it (a search term, page ti
 
 Steps:
 
-1. **Search.** Call the Notion MCP search tool (it will be registered under a name like `mcp__notion__notion-search` or similar — use whatever Notion search tool is in your available tool list). Pass the scope as the query. If no Notion MCP tool is connected in this session, tell the user and point them at the headless fallback: `python3 scripts/smoke_notion.py --database <id>` with `NOTION_TOKEN` set, or the `mcp__context-graph__sync_notion` MCP tool directly.
+1. **Search.** Call the Notion MCP search tool (it will be registered under a name like `mcp__notion__notion-search` or similar — use whatever Notion search tool is in your available tool list). Pass the scope as `query`, set `query_type: "internal"`, a small `page_size` (e.g., 10), and `filters: {}`. If no Notion MCP tool is connected in this session, tell the user and point them at the headless fallback: `python3 scripts/smoke_notion.py --database <id>` with `NOTION_TOKEN` set, or the `mcp__context-graph__sync_notion` MCP tool directly.
 
 2. **Cap.** If the search returns more than ~50 pages, ask the user to confirm before pulling everything. Otherwise proceed.
 
-3. **Fetch each page.** For every result, call the Notion MCP fetch tool (e.g., `mcp__notion__notion-fetch`) to get full content plus metadata: `last_edited_time`, `created_time`, `url`, parent reference, and title.
+3. **Fetch each page.** For every result, call the Notion MCP fetch tool (e.g., `mcp__notion__notion-fetch`) with the result's `id` or `url`. The response shape is:
+   - `title` — the page title
+   - `url` — full `https://www.notion.so/<32-hex>` URL
+   - `text` — the page rendered as Notion-flavored markdown wrapped in `<page>…</page>`. The actual body lives between `<content>` and `</content>` tags inside `text`. Parent breadcrumb lives inside `<ancestor-path>` with `<parent-page title="…" />` entries (outermost first, so reverse them for a human-readable path).
 
 4. **Build records.** One Context Graph record per page, exactly this shape:
 
@@ -21,21 +24,20 @@ Steps:
    {
      "id": "notion:<32-hex-page-id>",
      "title": "<page title>",
-     "content": "<page body rendered as markdown>",
+     "content": "<markdown body — the substring between <content> and </content>>",
      "source": {
        "system": "notion",
-       "url": "<page url>",
+       "url": "<full notion.so url>",
        "metadata": {
          "notionPageId": "<32-hex>",
-         "last_edited_time": "<iso>",
-         "created_time": "<iso>",
-         "parent": "<parent ref>"
+         "last_edited_time": "<iso — from the search result's `timestamp` field>",
+         "parent": "<reversed ancestor-path titles joined with ' > '>"
        }
      }
    }
    ```
 
-   Strip the hyphens from Notion's 8-4-4-4-12 UUID to get the 32-hex id. Lowercase. The `notion:<32-hex>` id is the canonical scheme — it matches what the offline export adapter and the Python sync engine produce, so records dedupe instead of duplicating on re-runs.
+   The 32-hex id: Notion's `notion-search` result gives `url` as a bare 32-hex string already (no hyphens); use that directly. If you only have a hyphenated UUID, strip hyphens and lowercase. The `notion:<32-hex>` id is the canonical scheme — it matches what the offline export adapter and the Python sync engine produce, so records dedupe instead of duplicating on re-runs.
 
 5. **Index.** Call `mcp__context-graph__index_records` once with the full batch and the default `graphPath`. `merge_record` inside the indexer rejects stale replays by comparing `last_edited_time`, so a redundant call is safe.
 
