@@ -83,7 +83,7 @@ Goal: move beyond one-shot export ingestion to a live, bidirectional link with a
 - [x] Add a `/cg-sync-notion` slash command and an MCP tool `sync_notion`
 - [x] Make `merge_record` order-aware by comparing `last_edited_time` so a stale replay (backfill, rewound cursor) cannot overwrite a newer record
 - [x] Rework `/cg-sync-notion` to orchestrate the **official Notion MCP** (`notion-search` + `notion-fetch`) so users do not have to create an internal integration or manage `NOTION_TOKEN` — the Python client remains as the headless fallback (see `docs/notion-sync.md`)
-- [ ] Delta/cursor support over the MCP path (`notion-search` does not expose a `last_edited_time` filter; for now `merge_record` handles idempotency but every sync refetches the full scope)
+- [x] Delta/cursor support over the MCP path — per-page `{page_id: last_edited_time}` cursor at `.context-graph/notion_cursor.json`, filtered client-side before `notion-fetch` via `filter_pages_by_cursor` MCP tool; `--full` escape hatch documented in `commands/cg-sync-notion.md`
 - [x] Extend Notion block-type coverage in the Python client fallback: `table`, `toggle`, `callout`, `column_list`, `link_to_page`, `image` — `scripts/notion_markdown.py` + `scripts/notion_sync.py::_maybe_hydrate_children`
 - [ ] Run live smoke-test and record fixtures for integration tests
 - [ ] Optional push: write promoted rules and decisions back to Notion (either via the Notion MCP `notion-create-pages` / `notion-update-page` or the Python client)
@@ -136,16 +136,18 @@ Status: done
 
 ## Phase 7 - Evaluation
 
-Status: not started
+Status: in progress
 
 Goal: measure that structured retrieval actually beats loading the full note set.
 
-- [ ] Build an eval set of {query, expected direct matches, expected supporting relations}
-- [ ] Compute precision@k and recall@k per query, plus context pack size vs full-dump baseline
-- [ ] Track metrics over time; fail CI on regression
-- [ ] Add an eval mode to the CLI that runs the full set and prints a summary
+- [x] Build an eval set of {query, expected direct matches, expected supporting relations} — `data/eval/queries.json` + `data/eval/fixtures/graph.json`
+- [x] Compute precision@k and recall@k per query, plus context pack size vs full-dump baseline — `scripts/eval_harness.py`
+- [x] Track metrics over time; fail CI on regression — `data/eval/baseline.json` + `eval` CLI non-zero exit on regression
+- [x] Add an eval mode to the CLI that runs the full set and prints a summary — `context_graph_cli.py eval`
+- [ ] Wire the eval run into CI (GitHub Actions) so regressions block merges
+- [ ] Extend the seed eval set beyond 8 queries once real corpora exist (current recall is saturated at 1.0 on the 15-record fixture)
 
-Acceptance: every merge to main includes an eval report that shows no precision regression.
+Acceptance: every merge to main includes an eval report that shows no precision regression. (Met locally; CI wiring outstanding.)
 
 ## Cross-cutting - Schema versioning and migrations
 
