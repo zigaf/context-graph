@@ -211,16 +211,9 @@
     {
       "object": "block",
       "id": "dddddddd-dddd-dddd-dddd-dddddddddddd",
-      "type": "callout",
-      "callout": {
-        "rich_text": [
-          {
-            "type": "text",
-            "text": {"content": "Unsupported type — should be skipped", "link": null},
-            "plain_text": "Unsupported type — should be skipped",
-            "annotations": {"bold": false, "italic": false, "code": false}
-          }
-        ]
+      "type": "bookmark",
+      "bookmark": {
+        "url": "https://example.com/unsupported"
       }
     }
   ]
