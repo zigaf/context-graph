@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from typing import Any
+from typing import Any, Sequence
 
 from context_graph_core import (
     apply_proposal_decision,
@@ -31,7 +31,16 @@ def read_payload() -> dict[str, Any]:
     return json.loads(raw)
 
 
-def main() -> int:
+def main(argv: Sequence[str] | None = None) -> int:
+    argv_list = list(sys.argv[1:] if argv is None else argv)
+
+    # The `eval` subcommand uses its own argparse instance so the main CLI
+    # does not need to understand its flags. Dispatched here before the
+    # main parser runs so we never prompt for stdin.
+    if argv_list and argv_list[0] == "eval":
+        from eval_cli import main as eval_main
+        return eval_main(argv_list[1:])
+
     parser = argparse.ArgumentParser(description="Context Graph CLI")
     parser.add_argument(
         "command",
@@ -52,10 +61,11 @@ def main() -> int:
             "delete-record",
             "archive-record",
             "unarchive-record",
+            "eval",
         ],
         help="Command to execute",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(argv_list)
     payload = read_payload()
 
     if args.command == "classify-record":

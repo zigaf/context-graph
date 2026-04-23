@@ -1,0 +1,211 @@
+[
+  {
+    "id": "r:payment-webhook-incident",
+    "title": "Payment webhook incident: duplicate charges",
+    "content": "Incident where the payment webhook fired twice, creating duplicate charges on deposit callbacks during the provider outage.",
+    "markers": {
+      "type": "incident",
+      "domain": "payments",
+      "flow": "webhook",
+      "artifact": "endpoint",
+      "goal": "stabilize-flow",
+      "status": "in-progress",
+      "severity": "critical"
+    }
+  },
+  {
+    "id": "r:retry-policy",
+    "title": "Retry policy for webhook callbacks",
+    "content": "Rule describing exponential backoff and safe retry behaviour for payment webhook and deposit callback handlers.",
+    "markers": {
+      "type": "rule",
+      "domain": "payments",
+      "flow": "webhook",
+      "artifact": "service",
+      "goal": "prevent-regression",
+      "status": "done",
+      "severity": "high"
+    }
+  },
+  {
+    "id": "r:idempotency-keys",
+    "title": "Idempotency keys on webhook endpoint",
+    "content": "Decision to require idempotency keys on payment webhook endpoint to prevent duplicate charges.",
+    "markers": {
+      "type": "decision",
+      "domain": "payments",
+      "flow": "webhook",
+      "artifact": "endpoint",
+      "goal": "prevent-regression",
+      "status": "done",
+      "severity": "high"
+    }
+  },
+  {
+    "id": "r:deposit-job-bug",
+    "title": "Deposit job retry loop bug",
+    "content": "Bug where the deposit settlement job entered an infinite retry loop on transient payment provider errors.",
+    "markers": {
+      "type": "bug",
+      "domain": "payments",
+      "flow": "deposit",
+      "artifact": "job",
+      "goal": "fix-bug",
+      "status": "in-progress",
+      "severity": "high"
+    }
+  },
+  {
+    "id": "r:otp-signup-task",
+    "title": "Implement OTP signup flow",
+    "content": "Task to implement OTP auth during signup flow and wire verification endpoint.",
+    "markers": {
+      "type": "task",
+      "domain": "auth",
+      "flow": "signup",
+      "artifact": "endpoint",
+      "goal": "stabilize-flow",
+      "status": "new",
+      "severity": "medium"
+    }
+  },
+  {
+    "id": "r:signup-flow-spec",
+    "title": "Signup flow specification",
+    "content": "Spec for the end-to-end auth signup flow including OTP verification and session creation.",
+    "markers": {
+      "type": "spec",
+      "domain": "auth",
+      "flow": "signup",
+      "artifact": "document",
+      "goal": "document-behavior",
+      "status": "done",
+      "severity": "medium"
+    }
+  },
+  {
+    "id": "r:auth-rule",
+    "title": "Auth session invariants",
+    "content": "Rule describing session refresh invariants and token rotation for authentication.",
+    "markers": {
+      "type": "rule",
+      "domain": "auth",
+      "flow": "signup",
+      "artifact": "service",
+      "goal": "prevent-regression",
+      "status": "done",
+      "severity": "high"
+    }
+  },
+  {
+    "id": "r:auth-session-arch",
+    "title": "Auth session refresh architecture",
+    "content": "Architecture describing how auth sessions refresh tokens without dropping active sockets.",
+    "markers": {
+      "type": "architecture",
+      "domain": "auth",
+      "flow": "signup",
+      "artifact": "service",
+      "goal": "document-behavior",
+      "status": "done",
+      "severity": "medium"
+    }
+  },
+  {
+    "id": "r:kyc-verification-decision",
+    "title": "KYC verification provider decision",
+    "content": "Decision to keep the current KYC verification provider after evaluating two alternatives.",
+    "markers": {
+      "type": "decision",
+      "domain": "kyc",
+      "flow": "verification",
+      "artifact": "service",
+      "goal": "clarify-scope",
+      "status": "done",
+      "severity": "medium"
+    }
+  },
+  {
+    "id": "r:kyc-domain-rule",
+    "title": "KYC domain rule: block unverified withdrawals",
+    "content": "Rule that blocks withdrawals for any KYC account in the unverified state.",
+    "markers": {
+      "type": "rule",
+      "domain": "kyc",
+      "flow": "withdrawal",
+      "artifact": "service",
+      "goal": "prevent-regression",
+      "status": "done",
+      "severity": "high"
+    }
+  },
+  {
+    "id": "r:kyc-failing-bug",
+    "title": "KYC flow failing on document upload",
+    "content": "Bug where the KYC verification flow rejects valid documents uploaded through the modal.",
+    "markers": {
+      "type": "bug",
+      "domain": "kyc",
+      "flow": "verification",
+      "artifact": "ui-modal",
+      "goal": "fix-bug",
+      "status": "in-progress",
+      "severity": "high"
+    }
+  },
+  {
+    "id": "r:withdrawal-ui-spec",
+    "title": "Withdrawal UI modal design",
+    "content": "Product spec describing the withdrawal UI modal design including confirmation copy and error states.",
+    "markers": {
+      "type": "spec",
+      "domain": "ui",
+      "flow": "withdrawal",
+      "artifact": "ui-modal",
+      "goal": "document-behavior",
+      "status": "done",
+      "severity": "medium"
+    }
+  },
+  {
+    "id": "r:ui-modal-rule",
+    "title": "UI modal confirmation rule",
+    "content": "Rule that every destructive UI modal must have an explicit confirmation step.",
+    "markers": {
+      "type": "rule",
+      "domain": "ui",
+      "flow": "withdrawal",
+      "artifact": "ui-modal",
+      "goal": "prevent-regression",
+      "status": "done",
+      "severity": "medium"
+    }
+  },
+  {
+    "id": "r:trading-unrelated",
+    "title": "Trading execution architecture",
+    "content": "Architecture describing trading execution service and order routing.",
+    "markers": {
+      "type": "architecture",
+      "domain": "trading",
+      "artifact": "service",
+      "goal": "document-behavior",
+      "status": "done",
+      "severity": "medium"
+    }
+  },
+  {
+    "id": "r:integration-unrelated",
+    "title": "Integration provider research",
+    "content": "Research note comparing third-party integration providers for notification delivery.",
+    "markers": {
+      "type": "research",
+      "domain": "integration",
+      "flow": "notification",
+      "artifact": "service",
+      "goal": "clarify-scope",
+      "status": "done",
+      "severity": "low"
+    }
+  }
+]

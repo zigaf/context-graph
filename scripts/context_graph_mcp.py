@@ -22,6 +22,7 @@ from context_graph_core import (
     search_graph,
     unarchive_record,
 )
+import eval_harness as _eval_harness
 
 
 PROTOCOL_VERSION = "2025-03-26"
@@ -154,6 +155,33 @@ def handle_unarchive_record(arguments: dict[str, Any]) -> dict[str, Any]:
     if "recordId" not in arguments:
         raise ValueError("Missing required field: recordId")
     return unarchive_record(arguments)
+
+
+def handle_retrieval_scoring(arguments: dict[str, Any]) -> dict[str, Any]:
+    queries_path = arguments.get("queriesPath")
+    graph_path = arguments.get("graphPath")
+    if not queries_path:
+        raise ValueError("Missing required field: queriesPath")
+    if not graph_path:
+        raise ValueError("Missing required field: graphPath")
+    from pathlib import Path as _Path
+    queries = _eval_harness.load_queries(_Path(str(queries_path)))
+    results = _eval_harness.run_harness(queries, _Path(str(graph_path)), k=int(arguments.get("k") or 5))
+    summary = _eval_harness.summarize(results)
+    baseline_path = arguments.get("baselinePath")
+    baseline_info: dict[str, Any] = {}
+    if baseline_path:
+        is_regression, reason = _eval_harness.compare_against_baseline(
+            summary,
+            _Path(str(baseline_path)),
+            precision_tolerance=float(arguments.get("tolerance") or 0.0),
+        )
+        baseline_info = {"isRegression": is_regression, "reason": reason}
+    return {
+        "summary": summary,
+        "perQuery": [_eval_harness.result_to_dict(r) for r in results],
+        "baseline": baseline_info,
+    }
 
 
 TOOLS: list[ToolSpec] = [
@@ -559,6 +587,37 @@ TOOLS: list[ToolSpec] = [
             "required": ["recordId", "archived", "graphPath", "updatedAt"],
         },
         handler=handle_unarchive_record,
+    ),
+    ToolSpec(
+        name="eval_retrieval",
+        title="Score Retrieval Quality",
+        description=(
+            "Run the retrieval evaluation harness against a curated query set and "
+            "fixture graph; compute precision@k, recall@k, context-pack size vs "
+            "full-dump size, and optionally compare against a stored baseline."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "queriesPath": {"type": "string"},
+                "graphPath": {"type": "string"},
+                "baselinePath": {"type": "string"},
+                "tolerance": {"type": "number"},
+                "k": {"type": "number"},
+            },
+            "required": ["queriesPath", "graphPath"],
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "summary": {"type": "object"},
+                "perQuery": {"type": "array"},
+                "baseline": {"type": "object"},
+            },
+            "required": ["summary", "perQuery", "baseline"],
+        },
+        handler=handle_retrieval_scoring,
     ),
 ]
 
