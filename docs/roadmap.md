@@ -86,7 +86,7 @@ Goal: move beyond one-shot export ingestion to a live, bidirectional link with a
 - [x] Delta/cursor support over the MCP path — per-page `{page_id: last_edited_time}` cursor at `.context-graph/notion_cursor.json`, filtered client-side before `notion-fetch` via `filter_pages_by_cursor` MCP tool; `--full` escape hatch documented in `commands/cg-sync-notion.md`
 - [x] Extend Notion block-type coverage in the Python client fallback: `table`, `toggle`, `callout`, `column_list`, `link_to_page`, `image` — `scripts/notion_markdown.py` + `scripts/notion_sync.py::_maybe_hydrate_children`
 - [ ] Run live smoke-test and record fixtures for integration tests
-- [ ] Optional push: write promoted rules and decisions back to Notion (either via the Notion MCP `notion-create-pages` / `notion-update-page` or the Python client)
+- [x] Optional push: write promoted rules and decisions back to Notion — opt-in, idempotent via `.context-graph/notion_push.json` mapping; MCP tools `plan_notion_push`, `apply_notion_push_result`, `record_to_notion_payload`; Python fallback `push_to_notion` + CLI `push-notion --dry-run/--apply`. Slash command documents the push phase and error handling. Update semantics = full body replace (deferred: diff/merge)
 
 Acceptance: running sync twice in a row is a no-op, and a Notion edit reflects in the graph on the next sync without duplicating the record. (Met in offline tests; pending live smoke-test.)
 
@@ -117,7 +117,7 @@ Goal: keep the graph small, correct, and safe over time.
 - [x] Add an optional redaction hook — `_REDACTORS` registry, `register_redactor` / `clear_redactors` / `strip_obvious_secrets` built-in
 - [x] Define Notion token storage rules — `docs/security.md`
 - [x] Define data retention policy for `data/graph.json` and any exported bundles — `docs/data-retention.md`
-- [ ] True per-neighbor partial edge rebuild for delete (current impl rebuilds over all survivors; acceptable while corpora are small, revisit when graph size warrants)
+- [x] True per-neighbor partial edge rebuild for delete — `rebuild_edges_for_neighbors` computes the dirty set, preserves non-dirty edges bit-for-bit including `createdAt`; equivalence against the legacy full-rebuild delete verified by `test_delete_matches_full_rebuild_output`
 
 Acceptance: deleting a record does not leave dangling edges (verified), and an inferred edge older than its TTL is not returned by `search_graph` (verified).
 
