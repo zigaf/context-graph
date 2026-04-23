@@ -154,6 +154,113 @@ def notion_cursor_path(start: Path | None = None) -> Path:
     return _resolve_workspace_file("notion_cursor.json", start)
 
 
+def load_notion_cursor(workspace_root: Path | str | None = None) -> dict[str, Any]:
+    """Read the per-page Notion cursor for a workspace.
+
+    Returns `{}` when the file is missing, unparseable, or not a dict. The
+    cursor maps `page_id -> last_edited_time` (ISO-8601 strings); callers should
+    treat an absent key as "never seen".
+    """
+    start = Path(workspace_root) if workspace_root is not None else None
+    path = notion_cursor_path(start)
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
+def save_notion_cursor(
+    cursor: dict[str, Any], workspace_root: Path | str | None = None
+) -> None:
+    """Persist the per-page Notion cursor for a workspace.
+
+    Overwrites the file; parent directories are created as needed.
+    """
+    start = Path(workspace_root) if workspace_root is not None else None
+    path = notion_cursor_path(start)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(cursor, f, ensure_ascii=True, indent=2)
+        f.write("\n")
+
+
+def cursor_is_fresh(page: dict[str, Any], cursor: dict[str, Any]) -> bool:
+    """Return True when `page` has been edited since the cursor last saw it.
+
+    Pure function. ISO-8601 zulu timestamps sort correctly as strings, so we
+    avoid datetime parsing here. A page missing either `id` or
+    `last_edited_time` is treated as fresh (we err toward refetching).
+    """
+    page_id = page.get("id") if isinstance(page, dict) else None
+    last_edited = page.get("last_edited_time") if isinstance(page, dict) else None
+    if not page_id or not last_edited:
+        return True
+    stored = cursor.get(str(page_id), "") if isinstance(cursor, dict) else ""
+    return str(last_edited) > str(stored or "")
+
+
+def update_cursor(cursor: dict[str, Any], page: dict[str, Any]) -> dict[str, Any]:
+    """Return a new cursor dict advanced to `page`'s `last_edited_time`.
+
+    Pure function — does not mutate `cursor`. A page whose `last_edited_time`
+    is not strictly newer than the stored value is a no-op (the returned dict
+    is a fresh copy but unchanged). Pages missing `id` or `last_edited_time`
+    are ignored.
+    """
+    result = dict(cursor) if isinstance(cursor, dict) else {}
+    if not isinstance(page, dict):
+        return result
+    page_id = page.get("id")
+    last_edited = page.get("last_edited_time")
+    if not page_id or not last_edited:
+        return result
+    existing = result.get(str(page_id), "")
+    if str(last_edited) > str(existing or ""):
+        result[str(page_id)] = str(last_edited)
+    return result
+
+
+def filter_pages_by_cursor(payload: dict[str, Any]) -> dict[str, Any]:
+    """Split a page list into fresh (needs fetch) and stale (skip) buckets.
+
+    Pure function. Does not touch disk or mutate inputs. The `newCursorHint`
+    is the max `last_edited_time` across the fresh pages, or None when no
+    page is fresh — a convenience for callers that want to advance the
+    cursor after a successful fetch cycle.
+    """
+    pages = payload.get("pages") if isinstance(payload, dict) else None
+    cursor = payload.get("cursor") if isinstance(payload, dict) else None
+    pages_list = list(pages) if isinstance(pages, list) else []
+    cursor_dict = cursor if isinstance(cursor, dict) else {}
+
+    fresh: list[dict[str, Any]] = []
+    stale: list[dict[str, Any]] = []
+    newest: str | None = None
+
+    for page in pages_list:
+        if not isinstance(page, dict):
+            continue
+        if cursor_is_fresh(page, cursor_dict):
+            fresh.append(page)
+            last_edited = page.get("last_edited_time")
+            if isinstance(last_edited, str) and (newest is None or last_edited > newest):
+                newest = last_edited
+        else:
+            stale.append(page)
+
+    return {
+        "fresh": fresh,
+        "stale": stale,
+        "newCursorHint": newest,
+    }
+
+
 GITIGNORE_ENTRIES = [
     ".context-graph/graph.json",
     ".context-graph/schema.learned.json",

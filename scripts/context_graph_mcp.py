@@ -11,6 +11,7 @@ from context_graph_core import (
     build_context_pack,
     classify_record,
     delete_record,
+    filter_pages_by_cursor,
     index_records,
     infer_relations,
     init_workspace,
@@ -18,7 +19,9 @@ from context_graph_core import (
     ingest_notion_export,
     learn_schema,
     list_proposals,
+    load_notion_cursor,
     promote_pattern,
+    save_notion_cursor,
     search_graph,
     unarchive_record,
 )
@@ -154,6 +157,27 @@ def handle_unarchive_record(arguments: dict[str, Any]) -> dict[str, Any]:
     if "recordId" not in arguments:
         raise ValueError("Missing required field: recordId")
     return unarchive_record(arguments)
+
+
+def handle_load_notion_cursor(arguments: dict[str, Any]) -> dict[str, Any]:
+    workspace_root = arguments.get("workspaceRoot")
+    cursor = load_notion_cursor(workspace_root)
+    return {"cursor": cursor}
+
+
+def handle_save_notion_cursor(arguments: dict[str, Any]) -> dict[str, Any]:
+    if "cursor" not in arguments:
+        raise ValueError("Missing required field: cursor")
+    cursor = arguments["cursor"]
+    if not isinstance(cursor, dict):
+        raise ValueError("cursor must be an object")
+    workspace_root = arguments.get("workspaceRoot")
+    save_notion_cursor(cursor, workspace_root)
+    return {"cursor": cursor, "saved": True}
+
+
+def handle_filter_pages_by_cursor(arguments: dict[str, Any]) -> dict[str, Any]:
+    return filter_pages_by_cursor(arguments)
 
 
 TOOLS: list[ToolSpec] = [
@@ -482,6 +506,72 @@ TOOLS: list[ToolSpec] = [
             "required": ["pagesPulled", "recordIds"],
         },
         handler=handle_sync_notion,
+    ),
+    ToolSpec(
+        name="load_notion_cursor",
+        title="Load Notion Cursor",
+        description="Read the workspace's per-page Notion cursor mapping page_id to last-seen last_edited_time.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workspaceRoot": {"type": "string"},
+            },
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "cursor": {"type": "object"},
+            },
+            "required": ["cursor"],
+        },
+        handler=handle_load_notion_cursor,
+    ),
+    ToolSpec(
+        name="save_notion_cursor",
+        title="Save Notion Cursor",
+        description="Persist a per-page Notion cursor (page_id to last_edited_time) to the workspace.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workspaceRoot": {"type": "string"},
+                "cursor": {"type": "object"},
+            },
+            "required": ["cursor"],
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "cursor": {"type": "object"},
+                "saved": {"type": "boolean"},
+            },
+            "required": ["cursor", "saved"],
+        },
+        handler=handle_save_notion_cursor,
+    ),
+    ToolSpec(
+        name="filter_pages_by_cursor",
+        title="Filter Notion Pages by Cursor",
+        description="Partition Notion page stubs into fresh pages (to fetch) and stale pages (to skip) using a per-page cursor.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "pages": {"type": "array"},
+                "cursor": {"type": "object"},
+            },
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "fresh": {"type": "array"},
+                "stale": {"type": "array"},
+                "newCursorHint": {"type": ["string", "null"]},
+            },
+            "required": ["fresh", "stale"],
+        },
+        handler=handle_filter_pages_by_cursor,
     ),
     ToolSpec(
         name="delete_record",
