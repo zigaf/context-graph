@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -9,6 +10,36 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import unquote
+
+
+class WorkspaceNotInitializedError(RuntimeError):
+    """Raised when a context-graph operation needs a workspace but none is found."""
+
+
+WORKSPACE_MARKER = ".context-graph/workspace.json"
+
+
+def find_workspace_root(start: Path | None = None) -> Path | None:
+    """Walk up from `start` (defaults to CWD) looking for .context-graph/workspace.json.
+
+    Returns the directory that contains .context-graph/, or None if no marker is
+    found up to the filesystem root.
+    """
+    current = Path(start).resolve() if start is not None else Path.cwd().resolve()
+    for candidate in [current, *current.parents]:
+        if (candidate / WORKSPACE_MARKER).exists():
+            return candidate
+    return None
+
+
+def require_workspace(start: Path | None = None) -> Path:
+    """Like `find_workspace_root` but raises if none is found."""
+    root = find_workspace_root(start)
+    if root is None:
+        raise WorkspaceNotInitializedError(
+            "No Context Graph workspace found. Run /cg-init to initialize."
+        )
+    return root
 
 
 INFERRED_EDGE_TTL_DAYS = 30
