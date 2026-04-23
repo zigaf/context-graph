@@ -42,6 +42,9 @@ Available commands:
 7. `ingest-markdown` - scan markdown files, extract records from front matter plus headings, and optionally index them
 8. `ingest-notion-export` - scan Notion markdown exports, preserve page ids from filenames, and resolve local links between exported pages
 9. `sync-notion` - pull pages from a Notion database or parent page via the Notion API, persist a cursor for delta sync, and optionally index the result
+10. `delete-record` - remove a record from the graph and rebuild affected edges
+11. `archive-record` - hide a record from context packs and graph search without touching its edges
+12. `unarchive-record` - clear the archived flag so a record becomes visible again
 
 All commands read JSON from `stdin` and write JSON to `stdout`.
 
@@ -71,6 +74,9 @@ The server is registered in [.mcp.json](/Users/maksnalyvaiko/context-graph/.mcp.
 - `ingest_markdown`
 - `ingest_notion_export`
 - `sync_notion`
+- `delete_record`
+- `archive_record`
+- `unarchive_record`
 
 Example:
 
@@ -137,6 +143,14 @@ See [docs/roadmap.md](docs/roadmap.md) for the full plan. The next targets are:
 2. Live Notion sync: API client with delta sync, id mapping that dedupes with the export adapter, conflict policy
 3. Lifecycle and safety: record delete with partial edge rebuilds, TTL for inferred edges, token storage and redaction rules
 4. Evaluation harness: eval set, precision and recall metrics, CI regression gate
+
+## Security and data
+
+See [docs/security.md](docs/security.md) for Notion token handling: where to obtain the integration token, how to pass it via `NOTION_TOKEN` or the payload `token` field, and rotation guidance if it leaks.
+
+See [docs/data-retention.md](docs/data-retention.md) for what lives under `data/` (`graph.json` carries full record bodies; `notion_cursor.json` is just a timestamp) and the recommended hygiene for keeping the graph out of version control.
+
+See [docs/lifecycle.md](docs/lifecycle.md) for the user-facing view of record create, update, archive, delete, the TTL on inferred edges, and the optional redaction hook applied before a context pack is returned.
 
 ## Publishing note
 

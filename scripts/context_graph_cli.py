@@ -6,14 +6,17 @@ import sys
 from typing import Any
 
 from context_graph_core import (
+    archive_record,
     build_context_pack,
     classify_record,
+    delete_record,
     index_records,
     infer_relations,
     ingest_markdown,
     ingest_notion_export,
     promote_pattern,
     search_graph,
+    unarchive_record,
 )
 
 
@@ -38,6 +41,9 @@ def main() -> int:
             "ingest-markdown",
             "ingest-notion-export",
             "sync-notion",
+            "delete-record",
+            "archive-record",
+            "unarchive-record",
         ],
         help="Command to execute",
     )
@@ -68,6 +74,12 @@ def main() -> int:
             }
         else:
             result = sync_notion(payload)
+    elif args.command == "delete-record":
+        result = delete_record(payload)
+    elif args.command == "archive-record":
+        result = archive_record(payload)
+    elif args.command == "unarchive-record":
+        result = unarchive_record(payload)
     else:
         result = build_context_pack(payload)
 

@@ -104,19 +104,20 @@ Acceptance: `build_context_pack` returns visibly different results for the same 
 
 ## Phase 6 - Lifecycle and safety
 
-Status: not started
+Status: in progress
 
 Goal: keep the graph small, correct, and safe over time.
 
-- [ ] Add record delete with partial edge rebuild (only recompute edges for neighbors)
-- [ ] Add TTL or decay for inferred edges so stale probable links drop out
-- [ ] Add an archive mode that keeps records out of retrieval but not out of storage
-- [x] Make `merge_record` in `context_graph_core.py` order-aware: when the incoming record carries a `last_edited_time` older than the stored one, keep the stored copy (closes a Phase 4a follow-up)
-- [ ] Define Notion token storage rules and document them in the README
-- [ ] Define data retention policy for `data/graph.json` and any exported bundles
-- [ ] Add an optional redaction hook that runs before a record enters a context pack (e.g., strip emails, tokens)
+- [x] Add record delete with partial edge rebuild — `delete_record` drops touching edges then reruns `rebuild_edges` (idempotent) over survivors, preserving `createdAt` for surviving inferred edges
+- [x] Add TTL for inferred edges — `INFERRED_EDGE_TTL_DAYS = 30` default; `search_graph` filters at read time with `inferredEdgeTtlDays` payload override
+- [x] Add archive mode — `archive_record` / `unarchive_record`; `build_context_pack` and `search_graph` filter by default, `includeArchived` flag disables
+- [x] Make `merge_record` in `context_graph_core.py` order-aware: when the incoming record carries a `last_edited_time` older than the stored one, keep the stored copy
+- [x] Add an optional redaction hook — `_REDACTORS` registry, `register_redactor` / `clear_redactors` / `strip_obvious_secrets` built-in
+- [x] Define Notion token storage rules — `docs/security.md`
+- [x] Define data retention policy for `data/graph.json` and any exported bundles — `docs/data-retention.md`
+- [ ] True per-neighbor partial edge rebuild for delete (current impl rebuilds over all survivors; acceptable while corpora are small, revisit when graph size warrants)
 
-Acceptance: deleting a record does not leave dangling edges, and an inferred edge older than its TTL is not returned by `search_graph`.
+Acceptance: deleting a record does not leave dangling edges (verified), and an inferred edge older than its TTL is not returned by `search_graph` (verified).
 
 ## Phase 7 - Evaluation
 

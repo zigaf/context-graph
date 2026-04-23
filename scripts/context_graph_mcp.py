@@ -6,14 +6,17 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from context_graph_core import (
+    archive_record,
     build_context_pack,
     classify_record,
+    delete_record,
     index_records,
     infer_relations,
     ingest_markdown,
     ingest_notion_export,
     promote_pattern,
     search_graph,
+    unarchive_record,
 )
 
 
@@ -113,6 +116,24 @@ def handle_sync_notion(arguments: dict[str, Any]) -> dict[str, Any]:
             f"or run ingest_notion_export on a markdown export instead. Detail: {exc}"
         )
     return sync_notion(arguments)
+
+
+def handle_delete_record(arguments: dict[str, Any]) -> dict[str, Any]:
+    if "recordId" not in arguments:
+        raise ValueError("Missing required field: recordId")
+    return delete_record(arguments)
+
+
+def handle_archive_record(arguments: dict[str, Any]) -> dict[str, Any]:
+    if "recordId" not in arguments:
+        raise ValueError("Missing required field: recordId")
+    return archive_record(arguments)
+
+
+def handle_unarchive_record(arguments: dict[str, Any]) -> dict[str, Any]:
+    if "recordId" not in arguments:
+        raise ValueError("Missing required field: recordId")
+    return unarchive_record(arguments)
 
 
 TOOLS: list[ToolSpec] = [
@@ -366,6 +387,83 @@ TOOLS: list[ToolSpec] = [
             "required": ["pagesPulled", "recordIds"],
         },
         handler=handle_sync_notion,
+    ),
+    ToolSpec(
+        name="delete_record",
+        title="Delete Record",
+        description="Remove a record from the persisted graph and rebuild edges so no dangling references survive.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "recordId": {"type": "string"},
+                "graphPath": {"type": "string"},
+            },
+            "required": ["recordId"],
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "deletedId": {"type": "string"},
+                "notFound": {"type": "boolean"},
+                "recordCount": {"type": "number"},
+                "edgeCount": {"type": "number"},
+                "graphPath": {"type": "string"},
+                "updatedAt": {"type": "string"},
+            },
+            "required": ["deletedId", "graphPath", "updatedAt"],
+        },
+        handler=handle_delete_record,
+    ),
+    ToolSpec(
+        name="archive_record",
+        title="Archive Record",
+        description="Flag a record as archived so it is hidden from context packs and graph search without modifying its edges.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "recordId": {"type": "string"},
+                "graphPath": {"type": "string"},
+            },
+            "required": ["recordId"],
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "recordId": {"type": "string"},
+                "archived": {"type": "boolean"},
+                "graphPath": {"type": "string"},
+                "updatedAt": {"type": "string"},
+            },
+            "required": ["recordId", "archived", "graphPath", "updatedAt"],
+        },
+        handler=handle_archive_record,
+    ),
+    ToolSpec(
+        name="unarchive_record",
+        title="Unarchive Record",
+        description="Clear the archived flag on a record so it becomes visible to context packs and graph search again.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "recordId": {"type": "string"},
+                "graphPath": {"type": "string"},
+            },
+            "required": ["recordId"],
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "recordId": {"type": "string"},
+                "archived": {"type": "boolean"},
+                "graphPath": {"type": "string"},
+                "updatedAt": {"type": "string"},
+            },
+            "required": ["recordId", "archived", "graphPath", "updatedAt"],
+        },
+        handler=handle_unarchive_record,
     ),
 ]
 

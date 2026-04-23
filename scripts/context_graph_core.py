@@ -7,8 +7,43 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import unquote
+
+
+INFERRED_EDGE_TTL_DAYS = 30
+
+
+# Module-level redactor registry. Redactors receive a shallow copy of a ranked
+# context-pack item and may return a new dict. Underlying graph records must
+# never be mutated by a redactor; callers in build_context_pack pass copies.
+_REDACTORS: list[Callable[[dict[str, Any]], dict[str, Any]]] = []
+
+
+def register_redactor(fn: Callable[[dict[str, Any]], dict[str, Any]]) -> None:
+    _REDACTORS.append(fn)
+
+
+def clear_redactors() -> None:
+    _REDACTORS.clear()
+
+
+EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+SECRET_TOKEN_RE = re.compile(r"\b(?:sk|pk|Bearer)[-_A-Za-z0-9]{16,}\b")
+
+
+def strip_obvious_secrets(record: dict[str, Any]) -> dict[str, Any]:
+    """Built-in redactor that scrubs emails and obvious API-key-looking tokens
+    from a record's ``content`` field. Not auto-registered — users must call
+    ``register_redactor(strip_obvious_secrets)`` explicitly to enable it.
+    """
+    redacted = dict(record)
+    content = redacted.get("content")
+    if isinstance(content, str) and content:
+        cleaned = EMAIL_RE.sub("[redacted-email]", content)
+        cleaned = SECRET_TOKEN_RE.sub("[redacted-secret]", cleaned)
+        redacted["content"] = cleaned
+    return redacted
 
 
 TOKEN_RE = re.compile(r"[a-z0-9][a-z0-9_-]{1,}")
@@ -465,7 +500,13 @@ def record_weight(record: dict[str, Any], query_markers: dict[str, str], query_t
 def build_context_pack(payload: dict[str, Any], schema: dict[str, Any] | None = None) -> dict[str, Any]:
     schema = schema or load_schema()
     query = str(payload.get("query") or "")
-    records = [classify_record({"record": item}, schema) for item in payload.get("records", [])]
+    include_archived = bool(payload.get("includeArchived", False))
+    raw_records = payload.get("records", [])
+    records = [
+        classify_record({"record": item}, schema)
+        for item in raw_records
+        if include_archived or not item.get("archived")
+    ]
     query_markers = normalize_markers(payload.get("markers", {}), schema)
     if query:
         query_markers = {**extract_query_markers(query, schema), **query_markers}
@@ -477,21 +518,40 @@ def build_context_pack(payload: dict[str, Any], schema: dict[str, Any] | None = 
         score, matched_markers = record_weight(record, query_markers, query_tokens)
         if score <= 0:
             continue
-        ranked.append(
-            {
-                "id": record.get("id"),
-                "title": record.get("title"),
-                "score": score,
-                "matchedMarkers": matched_markers,
-                "hierarchyPath": record.get("hierarchy", {}).get("path", ""),
-                "markers": record.get("markers", {}),
-                "relations": record.get("relations", {}),
-            }
-        )
+        item: dict[str, Any] = {
+            "id": record.get("id"),
+            "title": record.get("title"),
+            "score": score,
+            "matchedMarkers": matched_markers,
+            "hierarchyPath": record.get("hierarchy", {}).get("path", ""),
+            "markers": record.get("markers", {}),
+            "relations": record.get("relations", {}),
+        }
+        if _REDACTORS:
+            # Redactors operate on content, so we surface it only when needed.
+            item["content"] = record.get("content")
+        ranked.append(item)
 
     ranked.sort(key=lambda item: item["score"], reverse=True)
     top = ranked[:limit]
     supporting = [item for item in ranked[limit : limit + 5] if item["score"] >= 0.3]
+
+    if _REDACTORS:
+        # Apply each registered redactor in order to a shallow copy of each
+        # ranked item. The original graph records stay untouched because the
+        # ranked items above are freshly built dicts; each redactor is also
+        # handed a shallow copy to keep the registry contract explicit.
+        def _apply_redactors(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            out: list[dict[str, Any]] = []
+            for item in items:
+                current = dict(item)
+                for redactor in _REDACTORS:
+                    current = redactor(dict(current))
+                out.append(current)
+            return out
+
+        top = _apply_redactors(top)
+        supporting = _apply_redactors(supporting)
 
     return {
         "query": query,
@@ -805,9 +865,24 @@ def promote_pattern(payload: dict[str, Any], schema: dict[str, Any] | None = Non
     return result
 
 
-def rebuild_edges(records: dict[str, dict[str, Any]], schema: dict[str, Any]) -> list[dict[str, Any]]:
+def rebuild_edges(
+    records: dict[str, dict[str, Any]],
+    schema: dict[str, Any],
+    existing_edges: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     edges: dict[tuple[str, str, str], dict[str, Any]] = {}
     record_list = list(records.values())
+
+    # Build a lookup of prior inferred edges so we preserve their ``createdAt``
+    # stamp when the same (source, target, type) edge still applies. This keeps
+    # TTL age stable across rebuilds of unchanged edges. Explicit edges do not
+    # carry ``createdAt`` because they are never filtered by TTL.
+    prior_inferred: dict[tuple[Any, Any, Any], dict[str, Any]] = {}
+    if existing_edges:
+        for edge in existing_edges:
+            if edge.get("kind") == "inferred":
+                key = (edge.get("source"), edge.get("target"), edge.get("type"))
+                prior_inferred[key] = edge
 
     for record in record_list:
         source_id = record["id"]
@@ -838,6 +913,9 @@ def rebuild_edges(records: dict[str, dict[str, Any]], schema: dict[str, Any]) ->
             existing = edges.get(key)
             if existing and existing["kind"] == "explicit":
                 continue
+            now = now_iso()
+            prior = prior_inferred.get(key)
+            created_at = prior.get("createdAt") if prior and prior.get("createdAt") else now
             edges[key] = {
                 "source": source_id,
                 "target": relation["id"],
@@ -846,7 +924,8 @@ def rebuild_edges(records: dict[str, dict[str, Any]], schema: dict[str, Any]) ->
                 "confidence": relation["confidence"],
                 "matchedMarkers": relation.get("matchedMarkers", []),
                 "sharedTokens": relation.get("sharedTokens", []),
-                "updatedAt": now_iso(),
+                "createdAt": created_at,
+                "updatedAt": now,
             }
 
     return sorted(edges.values(), key=lambda item: (item["source"], item["kind"], -item["confidence"], item["target"]))
@@ -951,8 +1030,9 @@ def index_records(payload: dict[str, Any], schema: dict[str, Any] | None = None)
         existing_records[merged["id"]] = merged
         upserted_ids.append(merged["id"])
 
+    prior_edges = list(graph.get("edges", []))
     graph["records"] = existing_records
-    graph["edges"] = rebuild_edges(existing_records, schema)
+    graph["edges"] = rebuild_edges(existing_records, schema, prior_edges)
     write_graph(graph, graph_path)
 
     return {
@@ -1041,23 +1121,59 @@ def ingest_notion_export(payload: dict[str, Any], schema: dict[str, Any] | None 
     return result
 
 
+def _edge_survives_ttl(edge: dict[str, Any], ttl_days: float, now: datetime) -> bool:
+    """Return True if the edge should remain visible at read time. Explicit
+    edges are never filtered by TTL. Inferred edges without a parseable
+    ``createdAt`` are kept as well — callers should not silently discard data
+    just because a stamp is missing.
+    """
+    if edge.get("kind") != "inferred":
+        return True
+    if ttl_days is None or ttl_days <= 0:
+        return True
+    created = parse_dt(edge.get("createdAt"))
+    if not created:
+        return True
+    age_days = (now - created).total_seconds() / 86400.0
+    return age_days <= ttl_days
+
+
 def search_graph(payload: dict[str, Any], schema: dict[str, Any] | None = None) -> dict[str, Any]:
     schema = schema or load_schema()
     graph_path = payload.get("graphPath")
     graph = load_graph(graph_path)
-    records = list(graph.get("records", {}).values())
+    include_archived = bool(payload.get("includeArchived", False))
+    all_records = list(graph.get("records", {}).values())
+    visible_records = [
+        record for record in all_records if include_archived or not record.get("archived")
+    ]
+    ttl_days_raw = payload.get("inferredEdgeTtlDays", INFERRED_EDGE_TTL_DAYS)
+    try:
+        ttl_days = float(ttl_days_raw) if ttl_days_raw is not None else float(INFERRED_EDGE_TTL_DAYS)
+    except (TypeError, ValueError):
+        ttl_days = float(INFERRED_EDGE_TTL_DAYS)
+
     context_pack = build_context_pack(
         {
             "query": payload.get("query", ""),
             "markers": payload.get("markers", {}),
-            "records": records,
+            "records": visible_records,
             "limit": payload.get("limit", 8),
+            "includeArchived": include_archived,
         },
         schema,
     )
 
+    visible_ids = {record.get("id") for record in visible_records}
+    now = datetime.now(timezone.utc)
     edge_lookup: dict[str, list[dict[str, Any]]] = {}
     for edge in graph.get("edges", []):
+        if not include_archived and (edge.get("source") not in visible_ids or edge.get("target") not in visible_ids):
+            # Drop edges that point at or from archived records so they never
+            # leak into supporting-relations lookups either.
+            continue
+        if not _edge_survives_ttl(edge, ttl_days, now):
+            continue
         edge_lookup.setdefault(edge["source"], []).append(edge)
 
     for item in context_pack["directMatches"]:
@@ -1066,3 +1182,95 @@ def search_graph(payload: dict[str, Any], schema: dict[str, Any] | None = None) 
     context_pack["graphStats"] = graph.get("stats", {})
     context_pack["graphPath"] = str(Path(graph_path) if graph_path else default_graph_path())
     return context_pack
+
+
+def delete_record(payload: dict[str, Any], schema: dict[str, Any] | None = None) -> dict[str, Any]:
+    schema = schema or load_schema()
+    record_id = payload.get("recordId")
+    if not record_id:
+        raise ValueError("delete_record requires recordId.")
+    record_id = str(record_id)
+    graph_path = payload.get("graphPath")
+    graph = load_graph(graph_path)
+    records = dict(graph.get("records", {}))
+    resolved_path = str(Path(graph_path) if graph_path else default_graph_path())
+
+    if record_id not in records:
+        return {
+            "deletedId": record_id,
+            "notFound": True,
+            "recordCount": len(records),
+            "edgeCount": len(graph.get("edges", [])),
+            "graphPath": resolved_path,
+            "updatedAt": graph.get("updatedAt", now_iso()),
+        }
+
+    records.pop(record_id, None)
+
+    # Simplified partial rebuild: drop every edge touching the deleted id and
+    # re-run rebuild_edges over the remaining records. rebuild_edges is
+    # idempotent, so any inferred edges between the surviving records are
+    # preserved along with their createdAt stamps via existing_edges.
+    remaining_edges = [
+        edge for edge in graph.get("edges", [])
+        if edge.get("source") != record_id and edge.get("target") != record_id
+    ]
+    graph["records"] = records
+    graph["edges"] = rebuild_edges(records, schema, remaining_edges)
+    write_graph(graph, graph_path)
+
+    return {
+        "deletedId": record_id,
+        "notFound": False,
+        "recordCount": len(graph["records"]),
+        "edgeCount": len(graph["edges"]),
+        "graphPath": resolved_path,
+        "updatedAt": graph["updatedAt"],
+    }
+
+
+def _set_archived(payload: dict[str, Any], archived: bool) -> dict[str, Any]:
+    record_id = payload.get("recordId")
+    if not record_id:
+        raise ValueError("archive_record/unarchive_record requires recordId.")
+    record_id = str(record_id)
+    graph_path = payload.get("graphPath")
+    graph = load_graph(graph_path)
+    records = graph.get("records", {})
+    resolved_path = str(Path(graph_path) if graph_path else default_graph_path())
+
+    record = records.get(record_id)
+    if not record:
+        return {
+            "recordId": record_id,
+            "archived": archived,
+            "notFound": True,
+            "graphPath": resolved_path,
+            "updatedAt": graph.get("updatedAt", now_iso()),
+        }
+
+    if archived:
+        record["archived"] = True
+    else:
+        record.pop("archived", None)
+    records[record_id] = record
+
+    # Edges intentionally untouched: archiving hides the record at read time
+    # without destroying its relationships.
+    graph["records"] = records
+    write_graph(graph, graph_path)
+
+    return {
+        "recordId": record_id,
+        "archived": archived,
+        "graphPath": resolved_path,
+        "updatedAt": graph["updatedAt"],
+    }
+
+
+def archive_record(payload: dict[str, Any], schema: dict[str, Any] | None = None) -> dict[str, Any]:
+    return _set_archived(payload, True)
+
+
+def unarchive_record(payload: dict[str, Any], schema: dict[str, Any] | None = None) -> dict[str, Any]:
+    return _set_archived(payload, False)
