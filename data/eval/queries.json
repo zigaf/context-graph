@@ -1,0 +1,69 @@
+{
+  "version": "1",
+  "queries": [
+    {
+      "id": "q1",
+      "query": "payment webhook incident duplicate charges",
+      "intent": "debug",
+      "expectedDirectMatches": ["r:payment-webhook-incident"],
+      "expectedSupporting": ["r:retry-policy", "r:idempotency-keys"],
+      "k": 5
+    },
+    {
+      "id": "q2",
+      "query": "deposit job retry loop",
+      "intent": "debug",
+      "expectedDirectMatches": ["r:deposit-job-bug"],
+      "expectedSupporting": ["r:retry-policy"],
+      "k": 5
+    },
+    {
+      "id": "q3",
+      "query": "implement OTP signup flow",
+      "intent": "implementation",
+      "expectedDirectMatches": ["r:otp-signup-task"],
+      "expectedSupporting": ["r:signup-flow-spec", "r:auth-rule"],
+      "k": 5
+    },
+    {
+      "id": "q4",
+      "query": "auth session refresh architecture",
+      "intent": "architecture",
+      "expectedDirectMatches": ["r:auth-session-arch"],
+      "expectedSupporting": ["r:auth-rule", "r:signup-flow-spec"],
+      "k": 5
+    },
+    {
+      "id": "q5",
+      "query": "KYC verification provider decision",
+      "intent": "architecture",
+      "expectedDirectMatches": ["r:kyc-verification-decision"],
+      "expectedSupporting": ["r:kyc-domain-rule", "r:kyc-failing-bug"],
+      "k": 5
+    },
+    {
+      "id": "q6",
+      "query": "KYC document upload failing",
+      "intent": "debug",
+      "expectedDirectMatches": ["r:kyc-failing-bug"],
+      "expectedSupporting": ["r:kyc-verification-decision", "r:kyc-domain-rule"],
+      "k": 5
+    },
+    {
+      "id": "q7",
+      "query": "withdrawal UI modal design",
+      "intent": "product",
+      "expectedDirectMatches": ["r:withdrawal-ui-spec"],
+      "expectedSupporting": ["r:ui-modal-rule", "r:kyc-domain-rule"],
+      "k": 5
+    },
+    {
+      "id": "q8",
+      "query": "webhook idempotency keys endpoint",
+      "intent": "architecture",
+      "expectedDirectMatches": ["r:idempotency-keys"],
+      "expectedSupporting": ["r:payment-webhook-incident", "r:retry-policy"],
+      "k": 5
+    }
+  ]
+}
