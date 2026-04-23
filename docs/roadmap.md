@@ -81,7 +81,7 @@ Goal: move beyond one-shot export ingestion to a live, bidirectional link with a
 - [x] Map `notionPageId` to a single record id so the export adapter and the live adapter never create duplicates (canonical: `notion:<32-hex>`)
 - [x] Define conflict policy when local edits and Notion edits diverge — documented in `docs/notion-sync.md`; current behavior is remote-wins on content
 - [x] Add a `/cg-sync-notion` slash command and an MCP tool `sync_notion`
-- [ ] Make `merge_record` order-aware by comparing `last_edited_time` so a stale replay (backfill, rewound cursor) cannot overwrite a newer record — see Phase 6
+- [x] Make `merge_record` order-aware by comparing `last_edited_time` so a stale replay (backfill, rewound cursor) cannot overwrite a newer record
 - [ ] Extend Notion block-type coverage: `table`, `toggle`, `callout`, `column_list`, `link_to_page`, `image` (currently stubbed in `notion_markdown.py`)
 - [ ] Run live smoke-test against a real Notion workspace and record fixtures for integration tests
 - [ ] Optional push: write promoted rules and decisions back to a Notion database
@@ -111,7 +111,7 @@ Goal: keep the graph small, correct, and safe over time.
 - [ ] Add record delete with partial edge rebuild (only recompute edges for neighbors)
 - [ ] Add TTL or decay for inferred edges so stale probable links drop out
 - [ ] Add an archive mode that keeps records out of retrieval but not out of storage
-- [ ] Make `merge_record` in `context_graph_core.py` order-aware: when the incoming record carries a `last_edited_time` / `revision.updatedAt` older than the stored one, keep the stored copy (flagged by Phase 4a — remote-wins currently breaks on out-of-order replays)
+- [x] Make `merge_record` in `context_graph_core.py` order-aware: when the incoming record carries a `last_edited_time` older than the stored one, keep the stored copy (closes a Phase 4a follow-up)
 - [ ] Define Notion token storage rules and document them in the README
 - [ ] Define data retention policy for `data/graph.json` and any exported bundles
 - [ ] Add an optional redaction hook that runs before a record enters a context pack (e.g., strip emails, tokens)

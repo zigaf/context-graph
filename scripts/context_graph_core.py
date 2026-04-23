@@ -662,6 +662,13 @@ def shared_keywords(records: list[dict[str, Any]], limit: int = 8) -> list[str]:
 def merge_record(previous: dict[str, Any] | None, current: dict[str, Any]) -> dict[str, Any]:
     if not previous:
         return current
+    prev_edited = previous.get("source", {}).get("metadata", {}).get("last_edited_time")
+    curr_edited = current.get("source", {}).get("metadata", {}).get("last_edited_time")
+    if prev_edited and curr_edited:
+        prev_dt = parse_dt(prev_edited)
+        curr_dt = parse_dt(curr_edited)
+        if prev_dt and curr_dt and curr_dt < prev_dt:
+            return previous
     revision_version = int(previous.get("revision", {}).get("version", 1)) + 1
     merged = dict(current)
     merged["revision"] = {

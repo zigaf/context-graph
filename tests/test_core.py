@@ -18,6 +18,7 @@ from context_graph_core import (  # noqa: E402
     index_records,
     ingest_notion_export,
     load_graph,
+    merge_record,
     promote_pattern,
 )
 
@@ -63,6 +64,38 @@ class ContextGraphCoreTests(unittest.TestCase):
         self.assertGreater(len(result["splitSuggestions"]), 0)
         self.assertIn("type", result["quality"]["conflicts"])
         self.assertEqual(result["promotedRecord"]["source"]["metadata"]["promotionQuality"]["recommendation"], "split")
+
+    def test_merge_record_rejects_stale_last_edited_time(self):
+        previous = {
+            "id": "notion:abc",
+            "content": "FRESH",
+            "revision": {"version": 3, "updatedAt": "2026-04-10T10:00:00+00:00"},
+            "source": {"metadata": {"last_edited_time": "2026-04-10T10:00:00Z"}},
+        }
+        stale = {
+            "id": "notion:abc",
+            "content": "STALE",
+            "revision": {"version": 1, "updatedAt": "2026-04-01T10:00:00+00:00"},
+            "source": {"metadata": {"last_edited_time": "2026-04-01T10:00:00Z"}},
+        }
+        fresh = {
+            "id": "notion:abc",
+            "content": "NEWER",
+            "revision": {"version": 1, "updatedAt": "2026-04-20T10:00:00+00:00"},
+            "source": {"metadata": {"last_edited_time": "2026-04-20T10:00:00Z"}},
+        }
+        self.assertEqual(merge_record(previous, stale)["content"], "FRESH")
+        self.assertEqual(merge_record(previous, stale)["revision"]["version"], 3)
+        merged_fresh = merge_record(previous, fresh)
+        self.assertEqual(merged_fresh["content"], "NEWER")
+        self.assertEqual(merged_fresh["revision"]["version"], 4)
+
+    def test_merge_record_falls_back_when_timestamps_missing(self):
+        previous = {"id": "x", "content": "OLD", "revision": {"version": 2}, "source": {"metadata": {}}}
+        current = {"id": "x", "content": "NEW", "revision": {"version": 1}, "source": {"metadata": {}}}
+        merged = merge_record(previous, current)
+        self.assertEqual(merged["content"], "NEW")
+        self.assertEqual(merged["revision"]["version"], 3)
 
     def test_ingest_notion_export_preserves_page_ids_and_links(self):
         fixture_root = ROOT / "tests" / "fixtures" / "notion_export"
