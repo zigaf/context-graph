@@ -4,11 +4,10 @@
   "description": "Builds structured context graphs from notes using normalized markers, hierarchical paths, and explicit or inferred relations.",
   "author": {
     "name": "Context Graph Contributors",
-    "email": "maintainers@example.com",
-    "url": "https://example.com/context-graph"
+    "url": "https://github.com/zigaf/context-graph"
   },
-  "homepage": "https://example.com/context-graph",
-  "repository": "https://example.com/context-graph/repository",
+  "homepage": "https://github.com/zigaf/context-graph",
+  "repository": "https://github.com/zigaf/context-graph.git",
   "license": "MIT",
   "keywords": [
     "context",
@@ -33,9 +32,9 @@
       "Write",
       "Search"
     ],
-    "websiteURL": "https://example.com/context-graph",
-    "privacyPolicyURL": "https://example.com/context-graph/privacy",
-    "termsOfServiceURL": "https://example.com/context-graph/terms",
+    "websiteURL": "https://github.com/zigaf/context-graph",
+    "privacyPolicyURL": "https://github.com/zigaf/context-graph/blob/main/docs/security.md",
+    "termsOfServiceURL": "https://github.com/zigaf/context-graph/blob/main/LICENSE",
     "defaultPrompt": [
       "Classify these notes with normalized markers and add missing hierarchy paths.",
       "Build a compact context pack for this task using direct and one-hop related records.",
