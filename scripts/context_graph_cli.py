@@ -153,6 +153,38 @@ def _run_push_notion(argv: list[str]) -> int:
     return 0
 
 
+def _run_bootstrap(argv: list[str]) -> int:
+    """``context-graph bootstrap`` — preview the project sniff. With
+    ``--dry-run`` (default), prints the preview JSON and exits 0. The
+    accept/decline path is interactive and runs through the slash
+    command (`/cg-bootstrap`); the CLI does not orchestrate Notion API
+    calls itself.
+    """
+    sub_parser = argparse.ArgumentParser(
+        prog="context-graph bootstrap",
+        description="Show the bootstrap preview for the current workspace.",
+    )
+    sub_parser.add_argument("--workspace-root", dest="workspace_root", default=None)
+    sub_parser.add_argument("--dry-run", dest="dry_run", action="store_true", default=True)
+    sub_args = sub_parser.parse_args(argv)
+
+    from pathlib import Path
+    from curator_bootstrap import bootstrap_project_skeleton, is_bootstrap_needed
+    from context_graph_core import find_workspace_root
+
+    start = Path(sub_args.workspace_root) if sub_args.workspace_root else None
+    root = find_workspace_root(start)
+    if root is None:
+        sys.stderr.write("No workspace found. Run /cg-init first.\n")
+        return 2
+
+    preview = bootstrap_project_skeleton(root)
+    preview["bootstrapNeeded"] = is_bootstrap_needed(root)
+    json.dump(preview, sys.stdout, ensure_ascii=True, indent=2)
+    sys.stdout.write("\n")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     argv_list = list(sys.argv[1:] if argv is None else argv)
 
@@ -176,6 +208,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _run_graph_diff(argv_list[1:])
     if argv_list and argv_list[0] == "inspect-record":
         return _run_inspect_record(argv_list[1:])
+    if argv_list and argv_list[0] == "bootstrap":
+        return _run_bootstrap(argv_list[1:])
 
     parser = argparse.ArgumentParser(description="Context Graph CLI")
     parser.add_argument(

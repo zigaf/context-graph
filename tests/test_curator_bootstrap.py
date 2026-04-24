@@ -144,5 +144,29 @@ class BootstrapStateTests(unittest.TestCase):
             self.assertTrue(manifest["notion"]["bootstrapDeclined"])
 
 
+class CLIBootstrapTests(unittest.TestCase):
+    def test_dry_run_prints_preview(self):
+        import io, sys, tempfile
+        from contextlib import redirect_stdout
+        from pathlib import Path
+        from context_graph_core import init_workspace
+        # Re-import context_graph_cli main fresh:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+        from context_graph_cli import main as cli_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            init_workspace({"rootPath": tmp})
+            (Path(tmp) / "README.md").write_text("# Sample\n")
+            (Path(tmp) / "src").mkdir()
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = cli_main(["bootstrap", "--dry-run", "--workspace-root", tmp])
+            self.assertEqual(code, 0)
+            output = json.loads(buf.getvalue())
+            self.assertEqual(output["projectTitle"], "Sample")
+            paths = [d["path"] for d in output["topLevelDirs"]]
+            self.assertIn("src/", paths)
+
+
 if __name__ == "__main__":
     unittest.main()
