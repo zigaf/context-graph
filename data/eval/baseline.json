@@ -1,7 +1,7 @@
 {
-  "meanPrecisionAtK": 0.575,
+  "meanPrecisionAtK": 0.6833,
   "meanRecallAtK": 1.0,
   "queryCount": 8,
-  "packToFullDumpRatio": 0.7597,
+  "packToFullDumpRatio": 0.592,
   "note": "Baseline for Context Graph retrieval evaluation. Regression = meanPrecisionAtK drops below this value (subject to tolerance). Regenerate via: python3 scripts/context_graph_cli.py eval --save-baseline"
 }
