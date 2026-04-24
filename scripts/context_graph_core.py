@@ -18,6 +18,17 @@ from classifier_learning import run_full_pass
 from classifier_regions import extract_regions
 from classifier_schema import load_merged_schema
 from classifier_scorer import arbitrate, score_field
+from intent_modes import (
+    IntentMode,
+    apply_marker_weight,
+    apply_type_boost,
+    apply_status_bias,
+    apply_freshness_multiplier,
+    hop_cap_for,
+    hop_penalty_for,
+    is_relation_allowed,
+    resolve_intent,
+)
 
 
 class WorkspaceNotInitializedError(RuntimeError):
@@ -1097,6 +1108,7 @@ def _score_record_detailed(
     query_markers: dict[str, str],
     query_tokens: set[str],
     importance: dict[str, float] | None = None,
+    intent: IntentMode | None = None,
 ) -> dict[str, Any]:
     """Return every number that feeds into a record's retrieval score.
 
@@ -1108,7 +1120,22 @@ def _score_record_detailed(
     """
     markers = record.get("markers", {})
     matched_markers = [key for key, value in query_markers.items() if markers.get(key) == value]
+
+    # Per-axis marker weight under intent is applied before the weighted
+    # aggregate so the existing exactness pipeline stays one step.
+    per_axis_intent: dict[str, float] = {
+        a: apply_marker_weight(a, intent) for a in matched_markers
+    }
     exactness = _weighted_marker_score(matched_markers, query_markers, importance or {})
+    # Fold the per-axis intent multipliers into exactness by MEAN (not
+    # product, not importance-weighted sum). Mean keeps each matched
+    # axis's intent signal comparable regardless of learned
+    # markerImportance weights: a 2x intent boost on a low-importance
+    # axis should not be dominated by the importance weighting that
+    # _weighted_marker_score already applies. See spec §5.2 and the
+    # plan's Task 8 for the chosen contract.
+    if per_axis_intent:
+        exactness *= sum(per_axis_intent.values()) / len(per_axis_intent)
 
     record_tokens = set(record.get("tokens", []))
     matched_tokens = sorted(query_tokens & record_tokens)
@@ -1132,52 +1159,68 @@ def _score_record_detailed(
     }.get(status_value, 0.25)
     freshness = recency_score(record.get("updatedAt") or record.get("classifiedAt"))
 
-    total = (
+    base_total = (
         exactness * 0.45
         + token_overlap * 0.2
         + severity_weight * 0.15
         + status_weight * 0.1
         + freshness * 0.1
     )
+
+    # Intent post-multipliers, applied to the base_total in order:
+    # markerWeights already folded into exactness above.
+    type_boost_factor = apply_type_boost(markers.get("type"), intent)
+    status_bias_factor = apply_status_bias(status_value, intent)
+    freshness_mult_factor = apply_freshness_multiplier(1.0, intent)
+
+    total = base_total * type_boost_factor * status_bias_factor * freshness_mult_factor
     score = round(total, 3)
+
+    factors: dict[str, Any] = {
+        "markerMatch": {
+            "matched": matched_markers,
+            "weight": 0.45,
+            "value": exactness,
+            "contribution": round(exactness * 0.45, 6),
+        },
+        "tokenMatch": {
+            "matched": matched_tokens,
+            "queryTokenCount": len(query_tokens),
+            "recordTokenCount": len(record_tokens),
+            "weight": 0.2,
+            "value": token_overlap,
+            "contribution": round(token_overlap * 0.2, 6),
+        },
+        "severity": {
+            "value": severity_value,
+            "weight": 0.15,
+            "factor": severity_weight,
+            "contribution": round(severity_weight * 0.15, 6),
+        },
+        "status": {
+            "value": status_value,
+            "weight": 0.1,
+            "factor": status_weight,
+            "contribution": round(status_weight * 0.1, 6),
+        },
+        "freshness": {
+            "weight": 0.1,
+            "factor": freshness,
+            "contribution": round(freshness * 0.1, 6),
+            "updatedAt": record.get("updatedAt") or record.get("classifiedAt"),
+        },
+    }
+    if intent is not None:
+        factors["intentMarkerMultiplier"] = per_axis_intent
+        factors["intentTypeBoost"] = {"type": markers.get("type"), "value": type_boost_factor}
+        factors["intentStatusBias"] = {"status": status_value, "value": status_bias_factor}
+        factors["intentFreshnessMultiplier"] = {"value": freshness_mult_factor}
+
     return {
         "score": score,
         "matchedMarkers": matched_markers,
         "matchedTokens": matched_tokens,
-        "factors": {
-            "markerMatch": {
-                "matched": matched_markers,
-                "weight": 0.45,
-                "value": exactness,
-                "contribution": round(exactness * 0.45, 6),
-            },
-            "tokenMatch": {
-                "matched": matched_tokens,
-                "queryTokenCount": len(query_tokens),
-                "recordTokenCount": len(record_tokens),
-                "weight": 0.2,
-                "value": token_overlap,
-                "contribution": round(token_overlap * 0.2, 6),
-            },
-            "severity": {
-                "value": severity_value,
-                "weight": 0.15,
-                "factor": severity_weight,
-                "contribution": round(severity_weight * 0.15, 6),
-            },
-            "status": {
-                "value": status_value,
-                "weight": 0.1,
-                "factor": status_weight,
-                "contribution": round(status_weight * 0.1, 6),
-            },
-            "freshness": {
-                "weight": 0.1,
-                "factor": freshness,
-                "contribution": round(freshness * 0.1, 6),
-                "updatedAt": record.get("updatedAt") or record.get("classifiedAt"),
-            },
-        },
+        "factors": factors,
     }
 
 
@@ -1186,8 +1229,9 @@ def record_weight(
     query_markers: dict[str, str],
     query_tokens: set[str],
     importance: dict[str, float] | None = None,
+    intent: IntentMode | None = None,
 ) -> tuple[float, list[str]]:
-    detail = _score_record_detailed(record, query_markers, query_tokens, importance)
+    detail = _score_record_detailed(record, query_markers, query_tokens, importance, intent)
     return detail["score"], detail["matchedMarkers"]
 
 
@@ -1196,6 +1240,13 @@ def build_context_pack(payload: dict[str, Any], schema: dict[str, Any] | None = 
     workspace_start = Path(str(payload["workspaceRoot"])).resolve() if payload.get("workspaceRoot") else None
     query = str(payload.get("query") or "")
     include_archived = bool(payload.get("includeArchived", False))
+    intent_mode = payload.get("intentMode")
+    intent_override = payload.get("intentOverride")
+    intent = resolve_intent(intent_mode, intent_override)
+    # include_archived falls back to the intent's preference when the
+    # payload does not override it explicitly.
+    if intent is not None and intent.include_archived is not None and "includeArchived" not in payload:
+        include_archived = bool(intent.include_archived)
     raw_records = payload.get("records", [])
     records = [
         classify_record({"record": item}, schema)
@@ -1240,7 +1291,7 @@ def build_context_pack(payload: dict[str, Any], schema: dict[str, Any] | None = 
     records_by_id = {record.get("id"): record for record in records if record.get("id")}
 
     def _score_record(record: dict[str, Any]) -> tuple[float, list[str]]:
-        raw, matched = record_weight(record, query_markers, query_tokens, importance)
+        raw, matched = record_weight(record, query_markers, query_tokens, importance, intent)
         factor = type_freshness_factor(record, half_life_override)
         # Keep the internal score scale identical (3dp) so downstream
         # thresholds like the 0.3 supporting cutoff still work.
@@ -1295,6 +1346,15 @@ def build_context_pack(payload: dict[str, Any], schema: dict[str, Any] | None = 
     # token with the query.
     seed_scores: dict[str, float] = {}
     direct_hit_ids: list[str] = []
+    # Intent can override both the hop cap and the per-hop penalty. When
+    # the payload also passes an explicit max_hops / hop_penalty, the
+    # payload wins (explicit request > implicit preset).
+    if "hopTraversal" not in payload and intent is not None:
+        max_hops = hop_cap_for(intent, default=max_hops)
+    if "hopPenalty" not in payload and intent is not None:
+        override_penalty = hop_penalty_for(intent)
+        if override_penalty is not None:
+            hop_penalty = override_penalty
     effective_penalty = float(hop_penalty) if hop_penalty is not None else HOP_PENALTY
     for record in records:
         rid = record.get("id")
@@ -1327,6 +1387,9 @@ def build_context_pack(payload: dict[str, Any], schema: dict[str, Any] | None = 
                 continue
             seed_score_value = seed_scores.get(seed_id, 0.0)
             for rel in normalize_explicit_relations(seed_record):
+                rel_type = str(rel.get("type") or "")
+                if intent is not None and not is_relation_allowed(rel_type, intent):
+                    continue
                 target_id = rel.get("target")
                 if not target_id or target_id in ranked_by_id:
                     continue
