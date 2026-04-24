@@ -208,8 +208,10 @@ def apply_freshness_multiplier(decay: float, intent: IntentMode | None) -> float
 def is_relation_allowed(rel_type: str, intent: IntentMode | None) -> bool:
     """True when the relation type is allowed to be traversed (default: True)."""
 
-def hop_penalty_for(intent: IntentMode | None) -> float:
-    """Per-mode penalty or the global HOP_PENALTY when intent is None / mode's is None."""
+def hop_penalty_for(intent: IntentMode | None) -> float | None:
+    """Per-mode hop penalty, or ``None`` to let the caller fall back
+    to the module-level ``HOP_PENALTY`` in ``context_graph_core``. This
+    keeps ``intent_modes`` pure and free of cross-module imports."""
 
 def hop_cap_for(intent: IntentMode | None, default: int) -> int:
     """Cap from intent or `default` when intent is None."""
@@ -227,7 +229,7 @@ def hop_cap_for(intent: IntentMode | None, default: int) -> int:
 
 **`build_context_pack`** parses `intentMode` / `intentOverride`, calls `resolve_intent`, and passes the result through to:
 - `_score_record_detailed` (via the existing ranking loop).
-- The traversal loop: for each hop `h` in `range(1, hop_cap_for(intent, default=1) + 1)`, iterate edges whose type passes `is_relation_allowed(edge["type"], intent)`, and weight neighbors by `hop_penalty_for(intent) ** h`.
+- The traversal loop: for each hop `h` in `range(1, hop_cap_for(intent, default=1) + 1)`, iterate edges whose type passes `is_relation_allowed(edge["type"], intent)`. The per-hop penalty is `intent.hop_penalty if intent is not None and intent.hop_penalty is not None else HOP_PENALTY` (the same fallback pattern callers already use elsewhere in `context_graph_core`).
 
 **`search_graph`** applies the same payload parsing and passes `intent` into scoring. It does not traverse today, so no traversal change here; the hop knobs have no effect on `search_graph`.
 
