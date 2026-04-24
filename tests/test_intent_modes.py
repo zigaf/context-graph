@@ -120,5 +120,59 @@ class PresetTests(unittest.TestCase):
         self.assertFalse(mode.include_archived)
 
 
+from intent_modes import resolve_intent  # noqa: E402
+
+
+class ResolveIntentTests(unittest.TestCase):
+    def test_none_and_none_returns_none(self):
+        self.assertIsNone(resolve_intent(None, None))
+
+    def test_preset_name_returns_preset(self):
+        mode = resolve_intent("debug", None)
+        self.assertIsNotNone(mode)
+        self.assertEqual(mode.name, "debug")
+        self.assertEqual(mode.hop_cap, 2)
+
+    def test_unknown_name_raises(self):
+        with self.assertRaises(ValueError) as ctx:
+            resolve_intent("unknown", None)
+        message = str(ctx.exception)
+        self.assertIn("unknown", message)
+        for name in ("debug", "implementation", "architecture", "product"):
+            self.assertIn(name, message)
+
+    def test_override_without_mode_uses_neutral_base(self):
+        mode = resolve_intent(None, {"hopCap": 3})
+        self.assertIsNotNone(mode)
+        self.assertEqual(mode.hop_cap, 3)
+        self.assertEqual(mode.marker_weights, {})
+        self.assertEqual(mode.freshness_multiplier, 1.0)
+
+    def test_partial_override_on_preset(self):
+        mode = resolve_intent("debug", {"hopCap": 5})
+        self.assertEqual(mode.hop_cap, 5)
+        # Untouched fields keep preset values:
+        self.assertEqual(mode.marker_weights["severity"], 2.5)
+        self.assertEqual(mode.allowed_relations, frozenset({"might_affect", "same_pattern_as"}))
+
+    def test_override_full_dict_replaces_preset_dict(self):
+        # dict fields replace, not recursively merge
+        mode = resolve_intent("debug", {"typeBoost": {"pattern": 3.0}})
+        self.assertEqual(mode.type_boost, {"pattern": 3.0})
+
+    def test_override_allowedRelations_list(self):
+        mode = resolve_intent("debug", {"allowedRelations": ["derived_from"]})
+        self.assertEqual(mode.allowed_relations, frozenset({"derived_from"}))
+
+    def test_override_allowedRelations_null_means_all_allowed(self):
+        mode = resolve_intent("debug", {"allowedRelations": None})
+        self.assertIsNone(mode.allowed_relations)
+
+    def test_override_ignores_unknown_keys(self):
+        # Lenient: unknown fields do not raise. Default per spec §9.
+        mode = resolve_intent("debug", {"mysteryKey": 123, "hopCap": 4})
+        self.assertEqual(mode.hop_cap, 4)
+
+
 if __name__ == "__main__":
     unittest.main()
