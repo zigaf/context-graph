@@ -57,8 +57,10 @@ def _read_readme(root: Path) -> tuple[str, str]:
 def _read_manifest(root: Path) -> tuple[str, str]:
     """Return ``(title, tagline)`` from a manifest if present.
 
-    Tries ``package.json``, ``pyproject.toml``, ``Cargo.toml``, ``go.mod``
-    in that order. Returns ``("", "")`` when nothing is found.
+    Tries ``package.json``, ``pyproject.toml``, ``Cargo.toml`` in that
+    order. First manifest with a non-empty title wins; missing manifests
+    or manifests without a usable title fall through to the next
+    candidate. Returns ``("", "")`` when nothing usable is found.
     """
     pkg = root / "package.json"
     if pkg.exists():
@@ -67,7 +69,10 @@ def _read_manifest(root: Path) -> tuple[str, str]:
         except (json.JSONDecodeError, OSError):
             data = {}
         if isinstance(data, dict):
-            return str(data.get("name") or ""), str(data.get("description") or "")
+            title = str(data.get("name") or "")
+            tagline = str(data.get("description") or "")
+            if title:
+                return title, tagline
     py = root / "pyproject.toml"
     if py.exists():
         # Stdlib has tomllib in 3.11+. Use it lazily to keep the import
@@ -80,7 +85,10 @@ def _read_manifest(root: Path) -> tuple[str, str]:
         if isinstance(data, dict):
             project = data.get("project") or data.get("tool", {}).get("poetry") or {}
             if isinstance(project, dict):
-                return str(project.get("name") or ""), str(project.get("description") or "")
+                title = str(project.get("name") or "")
+                tagline = str(project.get("description") or "")
+                if title:
+                    return title, tagline
     cargo = root / "Cargo.toml"
     if cargo.exists():
         # Cheap parse: scan for `name = "..."` and `description = "..."`
@@ -147,13 +155,16 @@ def is_bootstrap_needed(workspace_root: Path | str) -> bool:
 
     Returns False when the workspace manifest is missing entirely (no
     ``init-workspace`` has been run) — bootstrap is not the right action
-    in that case; the user should run ``/cg-init`` first.
+    in that case; the user should run ``/cg-init`` first. Also returns
+    False when the manifest is unreadable or malformed: a corrupt
+    manifest must NOT hard-break SessionStart, since this helper is
+    consulted on every session start.
     """
     try:
         # Local import to avoid a circular import at module load.
         from context_graph_core import load_workspace_manifest
         manifest = load_workspace_manifest(workspace_root)
-    except FileNotFoundError:
+    except (FileNotFoundError, ValueError, OSError):
         return False
     notion = manifest.get("notion") or {}
     if notion.get("rootPageId"):
