@@ -2452,17 +2452,25 @@ def search_graph(payload: dict[str, Any], schema: dict[str, Any] | None = None) 
     except (TypeError, ValueError):
         ttl_days = float(INFERRED_EDGE_TTL_DAYS)
 
-    context_pack = build_context_pack(
-        {
-            "query": payload.get("query", ""),
-            "markers": payload.get("markers", {}),
-            "records": visible_records,
-            "limit": payload.get("limit", 8),
-            "includeArchived": include_archived,
-            "workspaceRoot": payload.get("workspaceRoot"),
-        },
-        schema,
-    )
+    # search_graph delegates scoring and traversal to build_context_pack,
+    # which is already intent-aware (resolves intent, applies marker /
+    # type / status / freshness multipliers, filters relations, scales
+    # hop penalties). Forward intentMode / intentOverride through the
+    # nested payload so a mode requested at the search layer reaches
+    # those scoring sites.
+    nested_payload: dict[str, Any] = {
+        "query": payload.get("query", ""),
+        "markers": payload.get("markers", {}),
+        "records": visible_records,
+        "limit": payload.get("limit", 8),
+        "includeArchived": include_archived,
+        "workspaceRoot": payload.get("workspaceRoot"),
+    }
+    if payload.get("intentMode") is not None:
+        nested_payload["intentMode"] = payload.get("intentMode")
+    if payload.get("intentOverride") is not None:
+        nested_payload["intentOverride"] = payload.get("intentOverride")
+    context_pack = build_context_pack(nested_payload, schema)
 
     visible_ids = {record.get("id") for record in visible_records}
     now = datetime.now(timezone.utc)
@@ -3208,8 +3216,14 @@ def inspect_record(payload: dict[str, Any], schema: dict[str, Any] | None = None
         query_markers = {**extract_query_markers(query, schema), **query_markers}
     query_tokens = tokenize(query)
     importance = _load_importance(workspace_start)
+    # Resolve the optional intent mode / override so the explainer
+    # reproduces the exact same score a retrieval caller would see if
+    # they passed the same intent to build_context_pack or search_graph.
+    intent = resolve_intent(payload.get("intentMode"), payload.get("intentOverride"))
 
-    detail = _score_record_detailed(record, query_markers, query_tokens, importance)
+    detail = _score_record_detailed(
+        record, query_markers, query_tokens, importance, intent=intent
+    )
 
     # Compute rank by scoring every record against the same query. Ties are
     # broken by the same stable sort used in build_context_pack so the rank
@@ -3221,7 +3235,7 @@ def inspect_record(payload: dict[str, Any], schema: dict[str, Any] | None = None
         if not include_archived and other_record.get("archived"):
             continue
         other_score = _score_record_detailed(
-            other_record, query_markers, query_tokens, importance
+            other_record, query_markers, query_tokens, importance, intent=intent
         )["score"]
         if other_score <= 0:
             continue
@@ -3300,6 +3314,21 @@ def format_inspect_record(result: dict[str, Any]) -> str:
         contribution = factor.get("contribution", 0)
         weight = factor.get("weight", 0)
         lines.append(f"  {key:14s} weight={weight}  contribution={contribution}")
+    # Intent sub-factors — only printed when an intent mode was applied
+    # to the score. Keeps non-intent output byte-identical.
+    if "intentMarkerMultiplier" in factors:
+        lines.append("  intentMarkerMultiplier:")
+        for axis, val in sorted(factors["intentMarkerMultiplier"].items()):
+            lines.append(f"    {axis}: {val}")
+    if "intentTypeBoost" in factors:
+        tb = factors["intentTypeBoost"]
+        lines.append(f"  intentTypeBoost: {tb.get('type')} -> {tb.get('value')}")
+    if "intentStatusBias" in factors:
+        sb = factors["intentStatusBias"]
+        lines.append(f"  intentStatusBias: {sb.get('status')} -> {sb.get('value')}")
+    if "intentFreshnessMultiplier" in factors:
+        fm = factors["intentFreshnessMultiplier"]
+        lines.append(f"  intentFreshnessMultiplier: {fm.get('value')}")
     lines.append(f"Final score: {result.get('score')}")
     rank = result.get("rank")
     limit = result.get("limit")
