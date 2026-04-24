@@ -35,6 +35,13 @@ from context_graph_core import (
     search_graph,
     unarchive_record,
 )
+from curator_bootstrap import (
+    bootstrap_project_skeleton,
+    is_bootstrap_needed,
+    mark_bootstrap_declined,
+    record_bootstrap_result,
+)
+from hashtag_parser import parse_hashtags as _parse_hashtags
 import eval_harness as _eval_harness
 
 
@@ -321,6 +328,47 @@ def handle_record_to_notion_payload(arguments: dict[str, Any]) -> dict[str, Any]
         "content": str(record.get("content") or ""),
         "parentPageId": parent_page_id,
     }
+
+
+def handle_bootstrap_preview(arguments: dict[str, Any]) -> dict[str, Any]:
+    workspace_root = arguments.get("workspaceRoot")
+    if not workspace_root:
+        raise ValueError("Missing required field: workspaceRoot")
+    preview = bootstrap_project_skeleton(workspace_root)
+    return {
+        **preview,
+        "bootstrapNeeded": is_bootstrap_needed(workspace_root),
+    }
+
+
+def handle_apply_bootstrap_decision(arguments: dict[str, Any]) -> dict[str, Any]:
+    workspace_root = arguments.get("workspaceRoot")
+    decision = arguments.get("decision")
+    if not workspace_root:
+        raise ValueError("Missing required field: workspaceRoot")
+    if decision not in {"accept", "decline"}:
+        raise ValueError("decision must be 'accept' or 'decline'")
+    if decision == "decline":
+        mark_bootstrap_declined(workspace_root)
+        return {"recorded": True, "decision": "decline"}
+    root_page_id = arguments.get("rootPageId")
+    if not root_page_id:
+        raise ValueError("Missing required field: rootPageId (required when decision=accept)")
+    record_bootstrap_result(
+        workspace_root,
+        root_page_id=str(root_page_id),
+        root_page_url=arguments.get("rootPageUrl"),
+        dir_page_ids=arguments.get("dirPageIds") or {},
+    )
+    return {"recorded": True, "decision": "accept", "rootPageId": str(root_page_id)}
+
+
+def handle_parse_hashtags(arguments: dict[str, Any]) -> dict[str, Any]:
+    query = str(arguments.get("query") or "")
+    from context_graph_core import load_schema
+    schema = load_schema()
+    new_query, markers = _parse_hashtags(query, schema)
+    return {"query": new_query, "markers": markers}
 
 
 TOOLS: list[ToolSpec] = [
@@ -1071,6 +1119,80 @@ TOOLS: list[ToolSpec] = [
             "required": ["summary", "perQuery", "baseline"],
         },
         handler=handle_retrieval_scoring,
+    ),
+    ToolSpec(
+        name="bootstrap_preview",
+        title="Bootstrap Preview",
+        description="Sniff the workspace's README, manifests, and top-level dirs to produce a skeleton preview for the curator bootstrap flow. Returns bootstrapNeeded so callers know whether to offer the bootstrap.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workspaceRoot": {"type": "string"},
+            },
+            "required": ["workspaceRoot"],
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "projectTitle": {"type": "string"},
+                "tagline": {"type": "string"},
+                "topLevelDirs": {"type": "array"},
+                "rootPath": {"type": "string"},
+                "bootstrapNeeded": {"type": "boolean"},
+            },
+            "required": ["projectTitle", "topLevelDirs", "bootstrapNeeded"],
+        },
+        handler=handle_bootstrap_preview,
+    ),
+    ToolSpec(
+        name="apply_bootstrap_decision",
+        title="Apply Bootstrap Decision",
+        description="Persist the user's bootstrap decision into workspace.json. decision='accept' requires rootPageId (and optionally rootPageUrl + dirPageIds); decision='decline' sets notion.bootstrapDeclined=true so SessionStart stops nagging.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workspaceRoot": {"type": "string"},
+                "decision": {"type": "string", "enum": ["accept", "decline"]},
+                "rootPageId": {"type": "string"},
+                "rootPageUrl": {"type": "string"},
+                "dirPageIds": {"type": "object"},
+            },
+            "required": ["workspaceRoot", "decision"],
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "recorded": {"type": "boolean"},
+                "decision": {"type": "string"},
+                "rootPageId": {"type": "string"},
+            },
+            "required": ["recorded", "decision"],
+        },
+        handler=handle_apply_bootstrap_decision,
+    ),
+    ToolSpec(
+        name="parse_hashtags",
+        title="Parse Hashtags",
+        description="Translate #word tokens in a query into a markers payload keyed by the schema axis that owns each word. Unknown tags stay in the query verbatim.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+            },
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "markers": {"type": "object"},
+            },
+            "required": ["query", "markers"],
+        },
+        handler=handle_parse_hashtags,
     ),
 ]
 
