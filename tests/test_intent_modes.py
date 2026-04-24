@@ -236,5 +236,49 @@ class FreshnessMultiplierHelperTests(unittest.TestCase):
         self.assertAlmostEqual(apply_freshness_multiplier(0.8, PRESETS["product"]), 0.96)
 
 
+from intent_modes import is_relation_allowed, hop_penalty_for, hop_cap_for  # noqa: E402
+
+
+class RelationFilterTests(unittest.TestCase):
+    def test_none_intent_allows_all(self):
+        self.assertTrue(is_relation_allowed("anything", None))
+
+    def test_mode_without_restriction_allows_all(self):
+        # NEUTRAL_INTENT and override-only modes have allowed_relations=None
+        from intent_modes import NEUTRAL_INTENT
+        self.assertTrue(is_relation_allowed("anything", NEUTRAL_INTENT))
+
+    def test_mode_with_restriction(self):
+        debug = PRESETS["debug"]
+        self.assertTrue(is_relation_allowed("might_affect", debug))
+        self.assertTrue(is_relation_allowed("same_pattern_as", debug))
+        self.assertFalse(is_relation_allowed("derived_from", debug))
+        self.assertFalse(is_relation_allowed("related_pattern", debug))
+
+
+class HopPenaltyHelperTests(unittest.TestCase):
+    def test_none_intent_returns_none(self):
+        self.assertIsNone(hop_penalty_for(None))
+
+    def test_mode_without_penalty_returns_none(self):
+        from intent_modes import NEUTRAL_INTENT
+        self.assertIsNone(hop_penalty_for(NEUTRAL_INTENT))
+
+    def test_mode_with_penalty(self):
+        self.assertEqual(hop_penalty_for(PRESETS["debug"]), 0.7)
+        self.assertEqual(hop_penalty_for(PRESETS["implementation"]), 0.3)
+
+
+class HopCapHelperTests(unittest.TestCase):
+    def test_none_intent_returns_default(self):
+        self.assertEqual(hop_cap_for(None, default=1), 1)
+        self.assertEqual(hop_cap_for(None, default=3), 3)
+
+    def test_mode_returns_mode_cap(self):
+        self.assertEqual(hop_cap_for(PRESETS["debug"], default=1), 2)
+        self.assertEqual(hop_cap_for(PRESETS["architecture"], default=1), 3)
+        self.assertEqual(hop_cap_for(PRESETS["implementation"], default=1), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

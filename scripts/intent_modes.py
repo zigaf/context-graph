@@ -186,3 +186,29 @@ def apply_freshness_multiplier(decay: float, intent: IntentMode | None) -> float
     if intent is None:
         return float(decay)
     return float(decay) * float(intent.freshness_multiplier)
+
+
+def is_relation_allowed(rel_type: str, intent: IntentMode | None) -> bool:
+    """True when ``rel_type`` may be traversed under this intent.
+
+    ``intent`` is None, or ``intent.allowed_relations`` is None → all
+    relation types are allowed (backward-compatible default).
+    """
+    if intent is None or intent.allowed_relations is None:
+        return True
+    return rel_type in intent.allowed_relations
+
+
+def hop_penalty_for(intent: IntentMode | None) -> float | None:
+    """Per-mode hop penalty, or ``None`` to let the caller fall back to
+    the module-level ``HOP_PENALTY`` constant."""
+    if intent is None:
+        return None
+    return intent.hop_penalty
+
+
+def hop_cap_for(intent: IntentMode | None, default: int) -> int:
+    """Hop cap from ``intent`` or ``default`` when intent is None."""
+    if intent is None:
+        return default
+    return int(intent.hop_cap)
