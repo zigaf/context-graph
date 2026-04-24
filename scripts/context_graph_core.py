@@ -2452,17 +2452,25 @@ def search_graph(payload: dict[str, Any], schema: dict[str, Any] | None = None) 
     except (TypeError, ValueError):
         ttl_days = float(INFERRED_EDGE_TTL_DAYS)
 
-    context_pack = build_context_pack(
-        {
-            "query": payload.get("query", ""),
-            "markers": payload.get("markers", {}),
-            "records": visible_records,
-            "limit": payload.get("limit", 8),
-            "includeArchived": include_archived,
-            "workspaceRoot": payload.get("workspaceRoot"),
-        },
-        schema,
-    )
+    # search_graph delegates scoring and traversal to build_context_pack,
+    # which is already intent-aware (resolves intent, applies marker /
+    # type / status / freshness multipliers, filters relations, scales
+    # hop penalties). Forward intentMode / intentOverride through the
+    # nested payload so a mode requested at the search layer reaches
+    # those scoring sites.
+    nested_payload: dict[str, Any] = {
+        "query": payload.get("query", ""),
+        "markers": payload.get("markers", {}),
+        "records": visible_records,
+        "limit": payload.get("limit", 8),
+        "includeArchived": include_archived,
+        "workspaceRoot": payload.get("workspaceRoot"),
+    }
+    if payload.get("intentMode") is not None:
+        nested_payload["intentMode"] = payload.get("intentMode")
+    if payload.get("intentOverride") is not None:
+        nested_payload["intentOverride"] = payload.get("intentOverride")
+    context_pack = build_context_pack(nested_payload, schema)
 
     visible_ids = {record.get("id") for record in visible_records}
     now = datetime.now(timezone.utc)

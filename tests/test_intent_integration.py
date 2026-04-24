@@ -179,3 +179,40 @@ class TraversalIntentRoutingTests(unittest.TestCase):
         ids = {item["id"] for item in pack["directMatches"]}
         self.assertIn("r-derived", ids)
         self.assertNotIn("r-affect", ids)
+
+
+class SearchGraphIntentTests(unittest.TestCase):
+    def test_search_graph_differs_under_modes(self):
+        import json, tempfile
+        from context_graph_core import search_graph
+
+        records = {
+            "r-bug": {
+                "id": "r-bug", "title": "Webhook crash",
+                "markers": {"type": "bug", "severity": "high", "status": "in-progress"},
+                "tokens": ["webhook"], "relations": {"explicit": [], "inferred": []},
+                "updatedAt": "2026-04-01T00:00:00Z",
+            },
+            "r-arch": {
+                "id": "r-arch", "title": "Webhook architecture",
+                "markers": {"type": "architecture", "domain": "payments", "scope": "platform"},
+                "tokens": ["webhook"], "relations": {"explicit": [], "inferred": []},
+                # Plan used 2025-01-01 — same note as
+                # BuildContextPackAcceptanceTests above: type_freshness
+                # age decay would overwhelm the intent sorting signal.
+                # Use the same recent timestamp as r-bug so the test
+                # exercises only intent-mode discrimination.
+                "updatedAt": "2026-04-01T00:00:00Z",
+            },
+        }
+        graph = {"records": records, "edges": [], "schema": {"learned": {}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            gp = Path(tmp) / "graph.json"
+            gp.write_text(json.dumps(graph))
+            res_debug = search_graph({"graphPath": str(gp), "query": "webhook", "intentMode": "debug"})
+            res_arch = search_graph({"graphPath": str(gp), "query": "webhook", "intentMode": "architecture"})
+            # real key in search_graph return is "directMatches" (it
+            # delegates to build_context_pack). Plan's "results" would
+            # have KeyError'd.
+            self.assertEqual(res_debug["directMatches"][0]["id"], "r-bug")
+            self.assertEqual(res_arch["directMatches"][0]["id"], "r-arch")
