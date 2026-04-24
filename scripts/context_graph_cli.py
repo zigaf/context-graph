@@ -11,11 +11,15 @@ from context_graph_core import (
     build_context_pack,
     classify_record,
     delete_record,
+    format_graph_diff,
+    format_inspect_record,
+    graph_diff,
     index_records,
     infer_relations,
     init_workspace,
     ingest_markdown,
     ingest_notion_export,
+    inspect_record,
     learn_schema,
     list_proposals,
     promote_pattern,
@@ -29,6 +33,69 @@ def read_payload() -> dict[str, Any]:
     if not raw:
         return {}
     return json.loads(raw)
+
+
+def _run_graph_diff(argv: list[str]) -> int:
+    """Entry point for ``graph-diff``.
+
+    Text output by default so a ``| less`` pipeline stays readable;
+    ``--json`` emits the structured payload for scripting.
+    """
+    sub_parser = argparse.ArgumentParser(
+        prog="context-graph graph-diff",
+        description="Compare two graph snapshots and print a human-readable diff.",
+    )
+    sub_parser.add_argument("--left", dest="left", required=True, help="Path to left graph.json")
+    sub_parser.add_argument("--right", dest="right", required=True, help="Path to right graph.json")
+    sub_parser.add_argument("--json", dest="as_json", action="store_true", help="Emit JSON instead of text.")
+    sub_args = sub_parser.parse_args(argv)
+
+    result = graph_diff({"leftPath": sub_args.left, "rightPath": sub_args.right})
+    if sub_args.as_json:
+        json.dump(result, sys.stdout, ensure_ascii=True, indent=2)
+        sys.stdout.write("\n")
+    else:
+        sys.stdout.write(format_graph_diff(result))
+        sys.stdout.write("\n")
+    return 0
+
+
+def _run_inspect_record(argv: list[str]) -> int:
+    """Entry point for ``inspect-record``.
+
+    Defaults to text output; ``--json`` emits the structured breakdown
+    (the same shape the MCP tool returns).
+    """
+    sub_parser = argparse.ArgumentParser(
+        prog="context-graph inspect-record",
+        description="Explain why a record ranks at its current score for a query.",
+    )
+    sub_parser.add_argument("--graph", dest="graph", required=False, help="Path to graph.json")
+    sub_parser.add_argument("--record", dest="record", required=True, help="Record id to inspect")
+    sub_parser.add_argument("--query", dest="query", default="", help="Query string to score against")
+    sub_parser.add_argument("--limit", dest="limit", type=int, default=8)
+    sub_parser.add_argument("--workspace-root", dest="workspace_root")
+    sub_parser.add_argument("--json", dest="as_json", action="store_true")
+    sub_args = sub_parser.parse_args(argv)
+
+    payload: dict[str, Any] = {
+        "recordId": sub_args.record,
+        "query": sub_args.query,
+        "limit": sub_args.limit,
+    }
+    if sub_args.graph:
+        payload["graphPath"] = sub_args.graph
+    if sub_args.workspace_root:
+        payload["workspaceRoot"] = sub_args.workspace_root
+
+    result = inspect_record(payload)
+    if sub_args.as_json:
+        json.dump(result, sys.stdout, ensure_ascii=True, indent=2)
+        sys.stdout.write("\n")
+    else:
+        sys.stdout.write(format_inspect_record(result))
+        sys.stdout.write("\n")
+    return 0
 
 
 def _run_push_notion(argv: list[str]) -> int:
@@ -85,6 +152,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if argv_list and argv_list[0] == "push-notion":
         return _run_push_notion(argv_list[1:])
 
+    # ``graph-diff`` and ``inspect-record`` take CLI flags directly rather
+    # than JSON on stdin — same dispatch pattern as ``push-notion`` so they
+    # don't block waiting for stdin to close.
+    if argv_list and argv_list[0] == "graph-diff":
+        return _run_graph_diff(argv_list[1:])
+    if argv_list and argv_list[0] == "inspect-record":
+        return _run_inspect_record(argv_list[1:])
+
     parser = argparse.ArgumentParser(description="Context Graph CLI")
     parser.add_argument(
         "command",
@@ -106,6 +181,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "delete-record",
             "archive-record",
             "unarchive-record",
+            "graph-diff",
+            "inspect-record",
             "eval",
         ],
         help="Command to execute",

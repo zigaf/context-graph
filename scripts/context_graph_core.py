@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -875,6 +876,11 @@ def classify_record(payload: dict[str, Any], schema: dict[str, Any] | None = Non
             schema,
             required,
         )
+    if payload.get("dryRun"):
+        # classify_record is already a pure read — the marker is purely for
+        # caller affordance so they can surface "dry-run" in UI without
+        # branching on call sites.
+        classified["dryRun"] = True
     return classified
 
 
@@ -976,23 +982,36 @@ def _weighted_marker_score(
     return matched_weight / total_weight
 
 
-def record_weight(
+def _score_record_detailed(
     record: dict[str, Any],
     query_markers: dict[str, str],
     query_tokens: set[str],
     importance: dict[str, float] | None = None,
-) -> tuple[float, list[str]]:
+) -> dict[str, Any]:
+    """Return every number that feeds into a record's retrieval score.
+
+    ``record_weight`` and the retrieval path use only ``score`` and
+    ``matchedMarkers`` from this result. ``inspect_record`` surfaces the
+    full breakdown. Splitting the computation this way keeps the two code
+    paths honest — there is a single source of truth for how a score is
+    built, so the ranker and the explainer can never drift.
+    """
     markers = record.get("markers", {})
     matched_markers = [key for key, value in query_markers.items() if markers.get(key) == value]
     exactness = _weighted_marker_score(matched_markers, query_markers, importance or {})
-    token_overlap = len(query_tokens & set(record.get("tokens", []))) / max(len(query_tokens), 1)
 
+    record_tokens = set(record.get("tokens", []))
+    matched_tokens = sorted(query_tokens & record_tokens)
+    token_overlap = len(matched_tokens) / max(len(query_tokens), 1)
+
+    severity_value = markers.get("severity")
     severity_weight = {
         "critical": 1.0,
         "high": 0.7,
         "medium": 0.4,
         "low": 0.2,
-    }.get(markers.get("severity"), 0.0)
+    }.get(severity_value, 0.0)
+    status_value = markers.get("status")
     status_weight = {
         "in-progress": 1.0,
         "known-risk": 0.85,
@@ -1000,7 +1019,7 @@ def record_weight(
         "fixed": 0.45,
         "done": 0.35,
         "archived": 0.1,
-    }.get(markers.get("status"), 0.25)
+    }.get(status_value, 0.25)
     freshness = recency_score(record.get("updatedAt") or record.get("classifiedAt"))
 
     total = (
@@ -1010,7 +1029,56 @@ def record_weight(
         + status_weight * 0.1
         + freshness * 0.1
     )
-    return round(total, 3), matched_markers
+    score = round(total, 3)
+    return {
+        "score": score,
+        "matchedMarkers": matched_markers,
+        "matchedTokens": matched_tokens,
+        "factors": {
+            "markerMatch": {
+                "matched": matched_markers,
+                "weight": 0.45,
+                "value": exactness,
+                "contribution": round(exactness * 0.45, 6),
+            },
+            "tokenMatch": {
+                "matched": matched_tokens,
+                "queryTokenCount": len(query_tokens),
+                "recordTokenCount": len(record_tokens),
+                "weight": 0.2,
+                "value": token_overlap,
+                "contribution": round(token_overlap * 0.2, 6),
+            },
+            "severity": {
+                "value": severity_value,
+                "weight": 0.15,
+                "factor": severity_weight,
+                "contribution": round(severity_weight * 0.15, 6),
+            },
+            "status": {
+                "value": status_value,
+                "weight": 0.1,
+                "factor": status_weight,
+                "contribution": round(status_weight * 0.1, 6),
+            },
+            "freshness": {
+                "weight": 0.1,
+                "factor": freshness,
+                "contribution": round(freshness * 0.1, 6),
+                "updatedAt": record.get("updatedAt") or record.get("classifiedAt"),
+            },
+        },
+    }
+
+
+def record_weight(
+    record: dict[str, Any],
+    query_markers: dict[str, str],
+    query_tokens: set[str],
+    importance: dict[str, float] | None = None,
+) -> tuple[float, list[str]]:
+    detail = _score_record_detailed(record, query_markers, query_tokens, importance)
+    return detail["score"], detail["matchedMarkers"]
 
 
 def build_context_pack(payload: dict[str, Any], schema: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -1375,10 +1443,14 @@ def promote_pattern(payload: dict[str, Any], schema: dict[str, Any] | None = Non
             {
                 "graphPath": graph_path,
                 "records": [promoted_record],
+                "dryRun": bool(payload.get("dryRun")),
             },
             schema,
         )
         result["indexResult"] = index_result
+
+    if payload.get("dryRun"):
+        result["dryRun"] = True
 
     return result
 
@@ -1677,6 +1749,7 @@ def collect_markdown_records(
 
 def index_records(payload: dict[str, Any], schema: dict[str, Any] | None = None) -> dict[str, Any]:
     schema = schema or load_schema()
+    dry_run = bool(payload.get("dryRun"))
     graph_path = payload.get("graphPath")
     if not graph_path and payload.get("workspaceRoot"):
         graph_path = str(default_graph_path(Path(str(payload["workspaceRoot"])).expanduser().resolve()))
@@ -1697,6 +1770,17 @@ def index_records(payload: dict[str, Any], schema: dict[str, Any] | None = None)
     prior_edges = list(graph.get("edges", []))
     graph["records"] = existing_records
     graph["edges"] = rebuild_edges(existing_records, schema, prior_edges)
+    if dry_run:
+        # Do not persist. The summary below still reflects what would have
+        # been written so callers can verify impact before committing.
+        return {
+            "graphPath": str(Path(graph_path) if graph_path else default_graph_path()),
+            "upsertedIds": upserted_ids,
+            "recordCount": len(graph["records"]),
+            "edgeCount": len(graph["edges"]),
+            "updatedAt": graph.get("updatedAt", now_iso()),
+            "dryRun": True,
+        }
     write_graph(graph, graph_path)
 
     workspace_for_side_effects: Path | None = None
@@ -1729,6 +1813,7 @@ def index_records(payload: dict[str, Any], schema: dict[str, Any] | None = None)
 
 def ingest_markdown(payload: dict[str, Any], schema: dict[str, Any] | None = None) -> dict[str, Any]:
     schema = schema or load_schema()
+    dry_run = bool(payload.get("dryRun"))
     root_value = payload.get("rootPath") or payload.get("path")
     if not root_value:
         raise ValueError("ingest_markdown requires rootPath.")
@@ -1757,16 +1842,21 @@ def ingest_markdown(payload: dict[str, Any], schema: dict[str, Any] | None = Non
             {
                 "graphPath": payload.get("graphPath"),
                 "records": records,
+                "dryRun": dry_run,
             },
             schema,
         )
         result["indexResult"] = index_result
+
+    if dry_run:
+        result["dryRun"] = True
 
     return result
 
 
 def ingest_notion_export(payload: dict[str, Any], schema: dict[str, Any] | None = None) -> dict[str, Any]:
     schema = schema or load_schema()
+    dry_run = bool(payload.get("dryRun"))
     root_value = payload.get("rootPath") or payload.get("path")
     if not root_value:
         raise ValueError("ingest_notion_export requires rootPath.")
@@ -1796,10 +1886,14 @@ def ingest_notion_export(payload: dict[str, Any], schema: dict[str, Any] | None 
             {
                 "graphPath": payload.get("graphPath"),
                 "records": records,
+                "dryRun": dry_run,
             },
             schema,
         )
         result["indexResult"] = index_result
+
+    if dry_run:
+        result["dryRun"] = True
 
     return result
 
@@ -1872,6 +1966,7 @@ def search_graph(payload: dict[str, Any], schema: dict[str, Any] | None = None) 
 
 def delete_record(payload: dict[str, Any], schema: dict[str, Any] | None = None) -> dict[str, Any]:
     schema = schema or load_schema()
+    dry_run = bool(payload.get("dryRun"))
     record_id = payload.get("recordId")
     if not record_id:
         raise ValueError("delete_record requires recordId.")
@@ -1882,7 +1977,7 @@ def delete_record(payload: dict[str, Any], schema: dict[str, Any] | None = None)
     resolved_path = str(Path(graph_path) if graph_path else default_graph_path())
 
     if record_id not in records:
-        return {
+        response = {
             "deletedId": record_id,
             "notFound": True,
             "recordCount": len(records),
@@ -1890,6 +1985,9 @@ def delete_record(payload: dict[str, Any], schema: dict[str, Any] | None = None)
             "graphPath": resolved_path,
             "updatedAt": graph.get("updatedAt", now_iso()),
         }
+        if dry_run:
+            response["dryRun"] = True
+        return response
 
     # Capture the dirty set (former neighbors of the deleted record) from
     # the pre-delete edge list. Only these records can possibly lose an
@@ -1935,6 +2033,17 @@ def delete_record(payload: dict[str, Any], schema: dict[str, Any] | None = None)
     dirty_neighbor_count = len(dirty_ids)
     del edges_dropped, dirty_neighbor_count  # unused until observability lands
 
+    if dry_run:
+        return {
+            "deletedId": record_id,
+            "notFound": False,
+            "recordCount": len(graph["records"]),
+            "edgeCount": len(graph["edges"]),
+            "graphPath": resolved_path,
+            "updatedAt": graph.get("updatedAt", now_iso()),
+            "dryRun": True,
+        }
+
     write_graph(graph, graph_path)
 
     return {
@@ -1948,6 +2057,7 @@ def delete_record(payload: dict[str, Any], schema: dict[str, Any] | None = None)
 
 
 def _set_archived(payload: dict[str, Any], archived: bool) -> dict[str, Any]:
+    dry_run = bool(payload.get("dryRun"))
     record_id = payload.get("recordId")
     if not record_id:
         raise ValueError("archive_record/unarchive_record requires recordId.")
@@ -1959,12 +2069,26 @@ def _set_archived(payload: dict[str, Any], archived: bool) -> dict[str, Any]:
 
     record = records.get(record_id)
     if not record:
-        return {
+        response = {
             "recordId": record_id,
             "archived": archived,
             "notFound": True,
             "graphPath": resolved_path,
             "updatedAt": graph.get("updatedAt", now_iso()),
+        }
+        if dry_run:
+            response["dryRun"] = True
+        return response
+
+    if dry_run:
+        # Don't mutate the in-memory record (load_graph returns a fresh dict
+        # but we still avoid flipping the flag). Return the "would-be" shape.
+        return {
+            "recordId": record_id,
+            "archived": archived,
+            "graphPath": resolved_path,
+            "updatedAt": graph.get("updatedAt", now_iso()),
+            "dryRun": True,
         }
 
     if archived:
@@ -2311,3 +2435,373 @@ def record_to_notion_blocks(record: dict[str, Any]) -> list[dict[str, Any]]:
         blocks.append(_flush_code_block(code_buffer, code_language))
 
     return blocks
+
+
+# ---------------------------------------------------------------------------
+# Observability (Cross-cutting)
+# ---------------------------------------------------------------------------
+
+
+def _content_hash(value: str | None) -> str:
+    """Short hex digest of ``value``. Used by ``graph_diff`` so we can flag a
+    content change without dumping the raw body — critical when graphs
+    contain secrets or long bodies.
+    """
+    if not value:
+        return ""
+    return hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:12]
+
+
+def _resolve_graph_arg(payload: dict[str, Any], prefix: str) -> dict[str, Any]:
+    """Return a graph dict from either ``<prefix>`` (inline) or ``<prefix>Path``.
+
+    Used by ``graph_diff`` so callers can hand us either raw graphs (unit
+    tests, MCP callers that already have the data) or a path (the CLI).
+    """
+    inline = payload.get(prefix)
+    if isinstance(inline, dict):
+        return inline
+    path_key = f"{prefix}Path"
+    path_value = payload.get(path_key)
+    if path_value:
+        return load_graph(str(path_value))
+    raise ValueError(
+        f"graph_diff requires either '{prefix}' or '{path_key}' in the payload."
+    )
+
+
+def _record_fingerprint(record: dict[str, Any]) -> dict[str, Any]:
+    """Extract the fields ``graph_diff`` compares on.
+
+    We keep ``markers``, ``title``, ``last_edited_time``, ``revision``, and
+    a short content hash — enough to tell "something meaningful moved"
+    without dumping bodies into the diff output.
+    """
+    content = record.get("content") or ""
+    return {
+        "title": record.get("title"),
+        "markers": record.get("markers") or {},
+        "contentHash": _content_hash(content if isinstance(content, str) else str(content)),
+        "lastEditedTime": (
+            record.get("last_edited_time")
+            or (record.get("source") or {}).get("metadata", {}).get("last_edited_time")
+        ),
+        "revision": record.get("revision"),
+    }
+
+
+def _diff_record_fingerprints(
+    left: dict[str, Any], right: dict[str, Any]
+) -> dict[str, dict[str, Any]]:
+    """Return a per-field change map for two record fingerprints.
+
+    Only fields that differ are surfaced; the caller decides whether the
+    record counts as modified (any change => modified).
+    """
+    changes: dict[str, dict[str, Any]] = {}
+    for key in ("title", "contentHash", "lastEditedTime", "revision", "markers"):
+        left_val = left.get(key)
+        right_val = right.get(key)
+        if left_val != right_val:
+            changes[key] = {"left": left_val, "right": right_val}
+    return changes
+
+
+def _edge_key(edge: dict[str, Any]) -> tuple[Any, Any, Any]:
+    return (edge.get("source"), edge.get("target"), edge.get("type"))
+
+
+def graph_diff(payload: dict[str, Any]) -> dict[str, Any]:
+    """Compare two graph snapshots and return a structured diff.
+
+    Accepts either inline graphs (``left`` / ``right`` keys, each a graph
+    dict) or paths (``leftPath`` / ``rightPath``). The returned shape:
+
+    ``{"recordsAdded": [...], "recordsRemoved": [...], "recordsModified":
+    [...], "edgesAdded": [...], "edgesRemoved": [...], "summary": {...}}``
+
+    Record entries carry ``id``, ``title``, and ``markers`` (enough to
+    identify the record in a terminal) plus, for modified records, a
+    ``changes`` map with per-field left/right pairs. Edges are
+    ``(source, target, type)`` tuples. Stability matters more than speed
+    here — the output is sorted by id so consecutive diffs of the same
+    graphs produce identical text output (friendly for ``diff -u``).
+    """
+    left = _resolve_graph_arg(payload, "left")
+    right = _resolve_graph_arg(payload, "right")
+
+    left_records = left.get("records") or {}
+    right_records = right.get("records") or {}
+
+    left_ids = set(left_records.keys())
+    right_ids = set(right_records.keys())
+
+    added_ids = sorted(right_ids - left_ids)
+    removed_ids = sorted(left_ids - right_ids)
+    shared_ids = sorted(left_ids & right_ids)
+
+    def _summary_entry(record: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": record.get("id"),
+            "title": record.get("title"),
+            "markers": record.get("markers") or {},
+        }
+
+    records_added = [_summary_entry(right_records[rid]) for rid in added_ids]
+    records_removed = [_summary_entry(left_records[rid]) for rid in removed_ids]
+
+    records_modified: list[dict[str, Any]] = []
+    for rid in shared_ids:
+        left_fp = _record_fingerprint(left_records[rid])
+        right_fp = _record_fingerprint(right_records[rid])
+        changes = _diff_record_fingerprints(left_fp, right_fp)
+        if not changes:
+            continue
+        records_modified.append(
+            {
+                "id": rid,
+                "title": right_records[rid].get("title"),
+                "changes": changes,
+            }
+        )
+
+    left_edges = {_edge_key(edge) for edge in left.get("edges") or []}
+    right_edges = {_edge_key(edge) for edge in right.get("edges") or []}
+
+    edges_added_keys = sorted(right_edges - left_edges)
+    edges_removed_keys = sorted(left_edges - right_edges)
+
+    def _edge_entry(key: tuple[Any, Any, Any]) -> dict[str, Any]:
+        return {"source": key[0], "target": key[1], "type": key[2]}
+
+    edges_added = [_edge_entry(key) for key in edges_added_keys]
+    edges_removed = [_edge_entry(key) for key in edges_removed_keys]
+
+    summary = {
+        "recordsAdded": len(records_added),
+        "recordsRemoved": len(records_removed),
+        "recordsModified": len(records_modified),
+        "edgesAdded": len(edges_added),
+        "edgesRemoved": len(edges_removed),
+    }
+
+    return {
+        "recordsAdded": records_added,
+        "recordsRemoved": records_removed,
+        "recordsModified": records_modified,
+        "edgesAdded": edges_added,
+        "edgesRemoved": edges_removed,
+        "summary": summary,
+    }
+
+
+def format_graph_diff(diff: dict[str, Any]) -> str:
+    """Render a ``graph_diff`` payload as a human-readable block of text.
+
+    Mirrors the JSON shape: records first (added / removed / modified),
+    then edges, then a single summary line. Kept stdlib-only so the CLI
+    does not need to depend on a formatting library.
+    """
+    lines: list[str] = []
+
+    def _section(header: str, items: list[Any]) -> None:
+        lines.append(f"{header} ({len(items)})")
+        if not items:
+            lines.append("  (none)")
+            return
+        for item in items:
+            lines.append(_format_diff_item(item))
+
+    _section("Records added", diff.get("recordsAdded") or [])
+    lines.append("")
+    _section("Records removed", diff.get("recordsRemoved") or [])
+    lines.append("")
+    _section("Records modified", diff.get("recordsModified") or [])
+    lines.append("")
+    _section("Edges added", diff.get("edgesAdded") or [])
+    lines.append("")
+    _section("Edges removed", diff.get("edgesRemoved") or [])
+    lines.append("")
+    summary = diff.get("summary") or {}
+    lines.append(
+        f"Summary: {summary.get('recordsAdded', 0)} records added, "
+        f"{summary.get('recordsRemoved', 0)} removed, "
+        f"{summary.get('recordsModified', 0)} modified; "
+        f"{summary.get('edgesAdded', 0)} edges added, "
+        f"{summary.get('edgesRemoved', 0)} removed."
+    )
+    return "\n".join(lines)
+
+
+def _format_diff_item(item: Any) -> str:
+    if not isinstance(item, dict):
+        return f"  {item!r}"
+    # Edge shape: source/target/type.
+    if "source" in item and "target" in item and "type" in item:
+        return f"  ({item['source']}, {item['target']}, {item['type']})"
+    # Modified record: id + changes.
+    if "changes" in item:
+        rid = item.get("id")
+        title = item.get("title") or ""
+        changed_keys = ", ".join(sorted((item.get("changes") or {}).keys()))
+        return f"  {rid}  [{changed_keys}]  {title}"
+    # Added/removed record summary.
+    rid = item.get("id") or ""
+    title = item.get("title") or ""
+    return f"  {rid}  {title}"
+
+
+def inspect_record(payload: dict[str, Any], schema: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Explain why a record scores what it does for ``query``.
+
+    Loads the graph at ``graphPath``, finds ``recordId``, recomputes the
+    retrieval score using the exact same helper that ``build_context_pack``
+    uses, and returns the full per-factor breakdown plus the record's
+    rank (1-based) in the top-k for that query. This is a read-only
+    introspection tool — it never writes and it never tweaks the scoring
+    math. If we ever want to change how scores are reported, we change
+    ``_score_record_detailed`` and both the ranker and the explainer move
+    together.
+    """
+    schema = schema or load_schema()
+    record_id = payload.get("recordId")
+    if not record_id:
+        raise ValueError("inspect_record requires recordId.")
+    record_id = str(record_id)
+    query = str(payload.get("query") or "")
+    graph_path_arg = payload.get("graphPath")
+    if not graph_path_arg and payload.get("workspaceRoot"):
+        graph_path_arg = str(
+            default_graph_path(Path(str(payload["workspaceRoot"])).expanduser().resolve())
+        )
+    graph = load_graph(graph_path_arg)
+    records = graph.get("records") or {}
+    record = records.get(record_id)
+    if record is None:
+        raise ValueError(f"Record not found: {record_id}")
+
+    workspace_start = (
+        Path(str(payload["workspaceRoot"])).resolve() if payload.get("workspaceRoot") else None
+    )
+    query_markers = normalize_markers(payload.get("markers", {}) or {}, schema)
+    if query:
+        query_markers = {**extract_query_markers(query, schema), **query_markers}
+    query_tokens = tokenize(query)
+    importance = _load_importance(workspace_start)
+
+    detail = _score_record_detailed(record, query_markers, query_tokens, importance)
+
+    # Compute rank by scoring every record against the same query. Ties are
+    # broken by the same stable sort used in build_context_pack so the rank
+    # reported here is the rank a user would see in a context pack.
+    limit = int(payload.get("limit", 8))
+    include_archived = bool(payload.get("includeArchived", False))
+    scored_pairs: list[tuple[float, str]] = []
+    for other_id, other_record in records.items():
+        if not include_archived and other_record.get("archived"):
+            continue
+        other_score = _score_record_detailed(
+            other_record, query_markers, query_tokens, importance
+        )["score"]
+        if other_score <= 0:
+            continue
+        scored_pairs.append((other_score, other_id))
+    # Stable sort by descending score then by id — matches the ranker's
+    # "sort by score desc" with Python's stable tie-break (insertion order).
+    scored_pairs.sort(key=lambda pair: (-pair[0], pair[1]))
+    rank = None
+    for idx, (_score, rid) in enumerate(scored_pairs, start=1):
+        if rid == record_id:
+            rank = idx
+            break
+    in_top_k = rank is not None and rank <= limit
+
+    # Edges that touch this record — surface only those the retrieval
+    # layer would surface (outgoing) plus incoming for symmetry. TTL is
+    # not applied here because inspect_record is debugging the score, not
+    # the pack rendering.
+    outgoing_edges = [
+        edge for edge in graph.get("edges") or [] if edge.get("source") == record_id
+    ]
+    incoming_edges = [
+        edge for edge in graph.get("edges") or [] if edge.get("target") == record_id
+    ]
+
+    return {
+        "id": record_id,
+        "title": record.get("title"),
+        "markers": record.get("markers") or {},
+        "query": query,
+        "queryTokens": sorted(query_tokens),
+        "queryMarkers": query_markers,
+        "matchedMarkers": detail["matchedMarkers"],
+        "matchedTokens": detail["matchedTokens"],
+        "factors": detail["factors"],
+        "score": detail["score"],
+        "rank": rank,
+        "inTopK": in_top_k,
+        "limit": limit,
+        "outgoingEdges": outgoing_edges,
+        "incomingEdges": incoming_edges,
+        "graphPath": str(Path(graph_path_arg) if graph_path_arg else default_graph_path()),
+    }
+
+
+def format_inspect_record(result: dict[str, Any]) -> str:
+    """Render an ``inspect_record`` payload as plain text for the CLI."""
+    lines: list[str] = []
+    lines.append(f"Record:  {result.get('id')}  {result.get('title') or ''}")
+    markers = result.get("markers") or {}
+    if markers:
+        lines.append(
+            "Markers: "
+            + ", ".join(f"{key}={value}" for key, value in sorted(markers.items()))
+        )
+    lines.append(f"Query:   {result.get('query') or ''}")
+    lines.append("Query tokens: " + ", ".join(result.get("queryTokens") or []))
+    qm = result.get("queryMarkers") or {}
+    if qm:
+        lines.append(
+            "Query markers: "
+            + ", ".join(f"{key}={value}" for key, value in sorted(qm.items()))
+        )
+    lines.append(
+        "Matched markers: "
+        + (", ".join(result.get("matchedMarkers") or []) or "(none)")
+    )
+    lines.append(
+        "Matched tokens:  "
+        + (", ".join(result.get("matchedTokens") or []) or "(none)")
+    )
+    factors = result.get("factors") or {}
+    lines.append("Factors:")
+    for key in ("markerMatch", "tokenMatch", "severity", "status", "freshness"):
+        factor = factors.get(key) or {}
+        contribution = factor.get("contribution", 0)
+        weight = factor.get("weight", 0)
+        lines.append(f"  {key:14s} weight={weight}  contribution={contribution}")
+    lines.append(f"Final score: {result.get('score')}")
+    rank = result.get("rank")
+    limit = result.get("limit")
+    if rank is None:
+        lines.append("Rank:        not ranked (score=0 or filtered)")
+    else:
+        top_marker = " (in top-k)" if result.get("inTopK") else ""
+        lines.append(f"Rank:        {rank} (limit {limit}){top_marker}")
+    outgoing = result.get("outgoingEdges") or []
+    incoming = result.get("incomingEdges") or []
+    if outgoing:
+        lines.append(f"Outgoing edges ({len(outgoing)}):")
+        for edge in outgoing:
+            lines.append(
+                f"  -> {edge.get('target')}  {edge.get('type')} "
+                f"[{edge.get('kind')}, conf={edge.get('confidence')}]"
+            )
+    if incoming:
+        lines.append(f"Incoming edges ({len(incoming)}):")
+        for edge in incoming:
+            lines.append(
+                f"  <- {edge.get('source')}  {edge.get('type')} "
+                f"[{edge.get('kind')}, conf={edge.get('confidence')}]"
+            )
+    return "\n".join(lines)
