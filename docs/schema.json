@@ -80,6 +80,13 @@
       "model",
       "service",
       "document"
+    ],
+    "scope": [
+      "convention",
+      "gotcha",
+      "intersection",
+      "system",
+      "module"
     ]
   },
   "aliases": {
