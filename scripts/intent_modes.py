@@ -34,3 +34,54 @@ class IntentMode:
 # types permitted). Used internally by ``resolve_intent`` when the
 # caller passes an ``override`` without a preset name.
 NEUTRAL_INTENT = IntentMode(name="")
+
+
+PRESETS: dict[str, IntentMode] = {
+    "debug": IntentMode(
+        name="debug",
+        marker_weights={"severity": 2.5, "artifact": 2.5, "flow": 1.5, "type": 2.0},
+        type_boost={"bug": 1.5, "incident": 1.5, "debug": 1.5},
+        status_bias={
+            "in-progress": 1.5, "known-risk": 1.3, "new": 1.2,
+            "fixed": 0.6, "done": 0.6,
+        },
+        freshness_multiplier=1.5,
+        hop_penalty=0.7,
+        hop_cap=2,
+        allowed_relations=frozenset({"might_affect", "same_pattern_as"}),
+        include_archived=False,
+    ),
+    "implementation": IntentMode(
+        name="implementation",
+        marker_weights={"flow": 2.0, "artifact": 2.0, "goal": 1.5, "type": 2.0},
+        type_boost={"rule": 1.5, "spec": 1.5, "pattern": 1.5, "decision": 1.3},
+        status_bias={"done": 1.3, "fixed": 1.1},
+        freshness_multiplier=1.0,
+        hop_penalty=0.3,
+        hop_cap=1,
+        allowed_relations=frozenset({"same_pattern_as", "derived_from"}),
+        include_archived=False,
+    ),
+    "architecture": IntentMode(
+        name="architecture",
+        marker_weights={"domain": 2.5, "scope": 2.5, "project": 1.5, "type": 2.0},
+        type_boost={"architecture": 1.8, "decision": 1.5, "rule": 1.3},
+        status_bias={},
+        freshness_multiplier=0.3,
+        hop_penalty=0.6,
+        hop_cap=3,
+        allowed_relations=frozenset({"derived_from", "related_pattern"}),
+        include_archived=False,
+    ),
+    "product": IntentMode(
+        name="product",
+        marker_weights={"goal": 2.5, "project": 2.0, "room": 2.0, "type": 2.0},
+        type_boost={"spec": 1.5, "research": 1.5, "decision": 1.3},
+        status_bias={"new": 1.3, "in-progress": 1.2, "known-risk": 1.2},
+        freshness_multiplier=1.2,
+        hop_penalty=0.5,
+        hop_cap=2,
+        allowed_relations=frozenset({"related_pattern", "derived_from"}),
+        include_archived=False,
+    ),
+}
