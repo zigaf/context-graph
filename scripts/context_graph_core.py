@@ -1237,6 +1237,13 @@ def build_context_pack(payload: dict[str, Any], schema: dict[str, Any] | None = 
     workspace_start = Path(str(payload["workspaceRoot"])).resolve() if payload.get("workspaceRoot") else None
     query = str(payload.get("query") or "")
     include_archived = bool(payload.get("includeArchived", False))
+    intent_mode = payload.get("intentMode")
+    intent_override = payload.get("intentOverride")
+    intent = resolve_intent(intent_mode, intent_override)
+    # include_archived falls back to the intent's preference when the
+    # payload does not override it explicitly.
+    if intent is not None and intent.include_archived is not None and "includeArchived" not in payload:
+        include_archived = bool(intent.include_archived)
     raw_records = payload.get("records", [])
     records = [
         classify_record({"record": item}, schema)
@@ -1281,7 +1288,7 @@ def build_context_pack(payload: dict[str, Any], schema: dict[str, Any] | None = 
     records_by_id = {record.get("id"): record for record in records if record.get("id")}
 
     def _score_record(record: dict[str, Any]) -> tuple[float, list[str]]:
-        raw, matched = record_weight(record, query_markers, query_tokens, importance)
+        raw, matched = record_weight(record, query_markers, query_tokens, importance, intent)
         factor = type_freshness_factor(record, half_life_override)
         # Keep the internal score scale identical (3dp) so downstream
         # thresholds like the 0.3 supporting cutoff still work.

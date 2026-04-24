@@ -54,3 +54,60 @@ class ScoreMarkerWeightIntegrationTests(unittest.TestCase):
         neutral = _score_record_detailed(record, {"type": "bug"}, {"webhook"}, None, intent=None)
         self.assertEqual(neutral["factors"].get("intentMarkerMultiplier"), None)
         self.assertEqual(neutral["factors"].get("intentTypeBoost"), None)
+
+
+class BuildContextPackAcceptanceTests(unittest.TestCase):
+    def test_same_query_different_modes_differ(self):
+        # build_context_pack takes records inline via payload["records"],
+        # not a graphPath. The plan's illustrative graphPath/topResults
+        # wording is adjusted to the real API here.
+        from context_graph_core import build_context_pack  # noqa: E402
+
+        records = [
+            {
+                "id": "r-bug", "title": "Payment webhook crash",
+                "content": "Stack trace on webhook retry.",
+                "markers": {"type": "bug", "severity": "high", "status": "in-progress",
+                            "domain": "payments", "flow": "webhook", "artifact": "webhook"},
+                "tokens": ["payment", "webhook", "crash", "retry"],
+                "relations": {"explicit": [], "inferred": []},
+                "updatedAt": "2026-04-01T00:00:00Z",
+            },
+            {
+                "id": "r-arch", "title": "Payment architecture decision",
+                "content": "Idempotency key strategy.",
+                "markers": {"type": "architecture", "status": "done",
+                            "domain": "payments", "scope": "platform"},
+                "tokens": ["payment", "idempotency", "architecture"],
+                "relations": {"explicit": [], "inferred": []},
+                # Use the same recent timestamp as r-bug so the
+                # type_freshness_factor age decay is equal for both and
+                # the test exercises only the intent-mode sorting
+                # discrimination. (Plan used 2025-01-01 which combined
+                # with architecture's half-life 180d made age decay
+                # overwhelm the intent signal.)
+                "updatedAt": "2026-04-01T00:00:00Z",
+            },
+        ]
+        pack_debug = build_context_pack({
+            "query": "payments",
+            "records": records,
+            "limit": 2,
+            "intentMode": "debug",
+        })
+        pack_arch = build_context_pack({
+            "query": "payments",
+            "records": records,
+            "limit": 2,
+            "intentMode": "architecture",
+        })
+        # Under debug, r-bug should rank first.
+        # real key in build_context_pack return is "directMatches"
+        self.assertEqual(pack_debug["directMatches"][0]["id"], "r-bug")
+        # Under architecture, r-arch should rank first.
+        self.assertEqual(pack_arch["directMatches"][0]["id"], "r-arch")
+
+    def test_unknown_mode_raises(self):
+        from context_graph_core import build_context_pack  # noqa: E402
+        with self.assertRaises(ValueError):
+            build_context_pack({"query": "x", "records": [], "intentMode": "nope"})
