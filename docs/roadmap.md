@@ -92,7 +92,7 @@ Acceptance: running sync twice in a row is a no-op, and a Notion edit reflects i
 
 ## Phase 5 - Smarter retrieval
 
-Status: in progress
+Status: done
 
 - [x] Add query intent modes: `debug`, `implementation`, `architecture`, `product` — presets in `scripts/intent_modes.py`, `intentMode`/`intentOverride` on `build_context_pack` / `search_graph` / `inspect_record`, eval harness routes by declared intent (baseline rewritten with no per-query precision regression)
 - [x] Add freshness decay tuning by record type — `FRESHNESS_HALF_LIFE_DAYS` constant + `freshnessHalfLifeDays` payload override; rules/decisions decay over a year, tasks/incidents over a month
