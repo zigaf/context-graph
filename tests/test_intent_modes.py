@@ -207,5 +207,34 @@ class TypeBoostHelperTests(unittest.TestCase):
         self.assertEqual(apply_type_boost(None, PRESETS["debug"]), 1.0)  # type: ignore[arg-type]
 
 
+from intent_modes import apply_status_bias, apply_freshness_multiplier  # noqa: E402
+
+
+class StatusBiasHelperTests(unittest.TestCase):
+    def test_none_intent_returns_one(self):
+        self.assertEqual(apply_status_bias("in-progress", None), 1.0)
+
+    def test_unmapped_status_returns_one(self):
+        self.assertEqual(apply_status_bias("in-progress", PRESETS["architecture"]), 1.0)
+
+    def test_mapped_status_returns_bias(self):
+        self.assertEqual(apply_status_bias("in-progress", PRESETS["debug"]), 1.5)
+        self.assertEqual(apply_status_bias("fixed", PRESETS["debug"]), 0.6)
+        self.assertEqual(apply_status_bias("done", PRESETS["implementation"]), 1.3)
+
+    def test_empty_status_returns_one(self):
+        self.assertEqual(apply_status_bias("", PRESETS["debug"]), 1.0)
+
+
+class FreshnessMultiplierHelperTests(unittest.TestCase):
+    def test_none_intent_returns_decay_unchanged(self):
+        self.assertEqual(apply_freshness_multiplier(0.5, None), 0.5)
+
+    def test_applies_mode_multiplier(self):
+        self.assertAlmostEqual(apply_freshness_multiplier(0.5, PRESETS["debug"]), 0.75)
+        self.assertAlmostEqual(apply_freshness_multiplier(1.0, PRESETS["architecture"]), 0.3)
+        self.assertAlmostEqual(apply_freshness_multiplier(0.8, PRESETS["product"]), 0.96)
+
+
 if __name__ == "__main__":
     unittest.main()

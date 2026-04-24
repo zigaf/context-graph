@@ -167,3 +167,22 @@ def apply_type_boost(record_type: str | None, intent: IntentMode | None) -> floa
     if intent is None or not record_type:
         return 1.0
     return float(intent.type_boost.get(record_type, 1.0))
+
+
+def apply_status_bias(status: str | None, intent: IntentMode | None) -> float:
+    """Multiplier keyed by ``markers.status``. 1.0 when intent is None,
+    status is missing/empty, or status is not in this intent's bias
+    map."""
+    if intent is None or not status:
+        return 1.0
+    return float(intent.status_bias.get(status, 1.0))
+
+
+def apply_freshness_multiplier(decay: float, intent: IntentMode | None) -> float:
+    """Scale an existing freshness decay factor by ``intent.freshness_multiplier``.
+
+    ``apply_freshness_multiplier(decay, None)`` returns ``decay`` unchanged.
+    """
+    if intent is None:
+        return float(decay)
+    return float(decay) * float(intent.freshness_multiplier)
