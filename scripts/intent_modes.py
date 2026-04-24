@@ -12,7 +12,7 @@ See ``docs/superpowers/specs/2026-04-24-intent-modes-design.md``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 
 @dataclass(frozen=True)
@@ -120,7 +120,6 @@ def _merge_override(base: IntentMode, override: dict) -> IntentMode:
             updates[dst_attr] = value
     if not updates:
         return base
-    from dataclasses import replace
     return replace(base, **updates)
 
 
