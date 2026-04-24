@@ -216,3 +216,34 @@ class SearchGraphIntentTests(unittest.TestCase):
             # have KeyError'd.
             self.assertEqual(res_debug["directMatches"][0]["id"], "r-bug")
             self.assertEqual(res_arch["directMatches"][0]["id"], "r-arch")
+
+
+class InspectRecordIntentTests(unittest.TestCase):
+    def test_inspect_record_under_mode_returns_intent_factors(self):
+        import json, tempfile
+        from context_graph_core import inspect_record
+
+        record = {
+            "id": "r1", "title": "Webhook crash",
+            "markers": {"type": "bug", "severity": "high", "status": "in-progress"},
+            "tokens": ["webhook"], "relations": {"explicit": [], "inferred": []},
+            "updatedAt": "2026-04-01T00:00:00Z",
+        }
+        graph = {"records": {"r1": record}, "edges": [], "schema": {"learned": {}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            gp = Path(tmp) / "graph.json"
+            gp.write_text(json.dumps(graph))
+            result = inspect_record({
+                "graphPath": str(gp),
+                "recordId": "r1",
+                "query": "webhook",
+                "intentMode": "debug",
+            })
+            # real inspect_record return has factors at the top level
+            # ("factors"), not nested under "score". Plan's fallback
+            # (result.get("score", {}).get("factors")) is unused here.
+            factors = result.get("factors") or result.get("score", {}).get("factors")
+            self.assertIn("intentMarkerMultiplier", factors)
+            self.assertIn("intentTypeBoost", factors)
+            self.assertIn("intentStatusBias", factors)
+            self.assertIn("intentFreshnessMultiplier", factors)

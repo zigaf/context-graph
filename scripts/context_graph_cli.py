@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 from typing import Any, Sequence
 
 from context_graph_core import (
@@ -75,6 +76,18 @@ def _run_inspect_record(argv: list[str]) -> int:
     sub_parser.add_argument("--query", dest="query", default="", help="Query string to score against")
     sub_parser.add_argument("--limit", dest="limit", type=int, default=8)
     sub_parser.add_argument("--workspace-root", dest="workspace_root")
+    sub_parser.add_argument(
+        "--mode",
+        dest="mode",
+        default=None,
+        help="Intent preset name: debug, implementation, architecture, product",
+    )
+    sub_parser.add_argument(
+        "--override",
+        dest="override_path",
+        default=None,
+        help="Path to JSON file with an intentOverride object",
+    )
     sub_parser.add_argument("--json", dest="as_json", action="store_true")
     sub_args = sub_parser.parse_args(argv)
 
@@ -87,6 +100,10 @@ def _run_inspect_record(argv: list[str]) -> int:
         payload["graphPath"] = sub_args.graph
     if sub_args.workspace_root:
         payload["workspaceRoot"] = sub_args.workspace_root
+    if sub_args.mode:
+        payload["intentMode"] = sub_args.mode
+    if sub_args.override_path:
+        payload["intentOverride"] = json.loads(Path(sub_args.override_path).read_text())
 
     result = inspect_record(payload)
     if sub_args.as_json:
