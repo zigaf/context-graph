@@ -175,15 +175,22 @@ def run_harness(
     results: list[EvalResult] = []
     for query in queries:
         effective_k = query.k if query.k and query.k > 0 else k
-        pack = build_context_pack(
-            {
-                "query": query.query,
-                "markers": query.markers,
-                "records": records,
-                "limit": effective_k,
-            },
-            schema,
-        )
+        # Forward the declared intent (when present) so per-query scoring
+        # reflects the preset weights from ``scripts/intent_modes.py``.
+        # Queries with no declared intent (empty string / missing) keep
+        # the non-intent path: ``intentMode`` is omitted entirely so the
+        # opt-in behavior of ``build_context_pack`` is preserved (passing
+        # an empty string would raise ``ValueError`` from
+        # ``resolve_intent``).
+        pack_payload: dict[str, Any] = {
+            "query": query.query,
+            "markers": query.markers,
+            "records": records,
+            "limit": effective_k,
+        }
+        if query.intent:
+            pack_payload["intentMode"] = query.intent
+        pack = build_context_pack(pack_payload, schema)
         retrieved = _retrieved_ids(pack)
         expected_direct = set(query.expectedDirectMatches)
         expected_supporting = set(query.expectedSupporting)

@@ -22,6 +22,7 @@ from eval_harness import (  # noqa: E402
     precision_at_k,
     recall_at_k,
     run_eval,
+    run_harness,
     summarize,
 )
 
@@ -214,6 +215,138 @@ class RunHarnessEndToEndTests(unittest.TestCase):
         a_scores = [(r.queryId, r.precisionAtK, r.recallAtK) for r in results_a]
         b_scores = [(r.queryId, r.precisionAtK, r.recallAtK) for r in results_b]
         self.assertEqual(a_scores, b_scores)
+
+
+class EvalHarnessIntentPassThroughTests(unittest.TestCase):
+    """Asserts that ``run_harness`` forwards ``EvalQuery.intent`` to
+    ``build_context_pack`` so per-query scoring reflects the declared
+    preset.
+
+    The fixture is constructed so the no-intent and debug-intent paths
+    produce DIFFERENT top-1 records:
+      - ``r-arch`` ranks first under no intent (it carries both ``domain``
+        and ``scope`` markers matching the query, plus a recent
+        ``updatedAt``).
+      - ``r-bug`` ranks first under ``debug`` intent (the preset's
+        ``type_boost={'bug': 1.5}`` + ``severity`` marker weight +
+        ``status_bias['in-progress']=1.5`` push it above ``r-arch``).
+
+    With ``k=1`` and ``expectedDirectMatches=['r-bug']`` the test
+    therefore yields ``precision@k == 1.0`` only when intent is forwarded;
+    a harness that ignores intent returns ``r-arch`` first and scores
+    ``precision@k == 0.0``.
+    """
+
+    def test_run_harness_passes_intent_per_query(self):
+        records = [
+            {
+                "id": "r-bug",
+                "title": "Payment bug",
+                "content": "payment bug",
+                "markers": {
+                    "type": "bug",
+                    "severity": "high",
+                    "status": "in-progress",
+                },
+                "tokens": ["payment"],
+                "relations": {"explicit": [], "inferred": []},
+                "updatedAt": "2026-04-01T00:00:00Z",
+            },
+            {
+                "id": "r-arch",
+                "title": "Payment architecture",
+                "content": "payment architecture",
+                "markers": {
+                    "type": "architecture",
+                    "domain": "payment",
+                    "scope": "payment",
+                    "status": "done",
+                },
+                "tokens": ["payment"],
+                "relations": {"explicit": [], "inferred": []},
+                "updatedAt": "2026-04-01T00:00:00Z",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            graph_path.write_text(json.dumps(records), encoding="utf-8")
+
+            # Sanity: with NO intent declared, r-arch outranks r-bug, so
+            # the expected r-bug is NOT in the top-1 and precision@k is 0.
+            no_intent_query = [
+                EvalQuery(
+                    id="qN",
+                    query="payment",
+                    intent="",
+                    expectedDirectMatches=["r-bug"],
+                    expectedSupporting=[],
+                    k=1,
+                )
+            ]
+            no_intent_results = run_harness(no_intent_query, graph_path, k=1)
+            self.assertEqual(
+                no_intent_results[0].precisionAtK,
+                0.0,
+                "Fixture invariant broken: with no intent, r-bug should "
+                "NOT rank ahead of r-arch on this fixture; otherwise the "
+                "test cannot prove that intent is being forwarded.",
+            )
+
+            # Real assertion: with intent='debug' declared on the query,
+            # the harness must forward it so r-bug climbs to top-1.
+            debug_query = [
+                EvalQuery(
+                    id="qD",
+                    query="payment",
+                    intent="debug",
+                    expectedDirectMatches=["r-bug"],
+                    expectedSupporting=[],
+                    k=1,
+                )
+            ]
+            debug_results = run_harness(debug_query, graph_path, k=1)
+            self.assertEqual(
+                debug_results[0].precisionAtK,
+                1.0,
+                "run_harness did not forward EvalQuery.intent to "
+                "build_context_pack: debug preset would rank r-bug above "
+                "r-arch, but the harness scored precision@k=0.",
+            )
+
+    def test_run_harness_omits_intent_for_blank_intent(self):
+        """Regression guard: queries with intent='' (or missing) must NOT
+        opt into intent-mode scoring. Forwarding an empty string would
+        raise ``ValueError('Unknown intentMode...')`` from
+        ``resolve_intent``; this test asserts the harness handles the
+        blank-intent path gracefully by skipping ``intentMode`` entirely.
+        """
+        records = [
+            {
+                "id": "r-only",
+                "title": "Sole record",
+                "content": "lonely",
+                "markers": {"type": "note"},
+                "tokens": ["lonely"],
+                "relations": {"explicit": [], "inferred": []},
+                "updatedAt": "2026-04-01T00:00:00Z",
+            }
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            graph_path = Path(tmp) / "graph.json"
+            graph_path.write_text(json.dumps(records), encoding="utf-8")
+            queries = [
+                EvalQuery(
+                    id="qBlank",
+                    query="lonely",
+                    intent="",
+                    expectedDirectMatches=["r-only"],
+                    expectedSupporting=[],
+                    k=1,
+                )
+            ]
+            # Should not raise.
+            results = run_harness(queries, graph_path, k=1)
+            self.assertEqual(len(results), 1)
 
 
 if __name__ == "__main__":
