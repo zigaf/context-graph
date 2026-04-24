@@ -139,3 +139,59 @@ def bootstrap_project_skeleton(workspace_root: Path | str) -> dict[str, Any]:
         "topLevelDirs": dirs,
         "rootPath": str(root),
     }
+
+
+def is_bootstrap_needed(workspace_root: Path | str) -> bool:
+    """True when the workspace exists, has no Notion root page id, and
+    has not been declined.
+
+    Returns False when the workspace manifest is missing entirely (no
+    ``init-workspace`` has been run) — bootstrap is not the right action
+    in that case; the user should run ``/cg-init`` first.
+    """
+    try:
+        # Local import to avoid a circular import at module load.
+        from context_graph_core import load_workspace_manifest
+        manifest = load_workspace_manifest(workspace_root)
+    except FileNotFoundError:
+        return False
+    notion = manifest.get("notion") or {}
+    if notion.get("rootPageId"):
+        return False
+    if notion.get("bootstrapDeclined"):
+        return False
+    return True
+
+
+def mark_bootstrap_declined(workspace_root: Path | str) -> None:
+    """Persist ``bootstrapDeclined: True`` so SessionStart stops nagging."""
+    from context_graph_core import update_workspace_manifest, load_workspace_manifest
+    manifest = load_workspace_manifest(workspace_root)
+    notion = dict(manifest.get("notion") or {})
+    notion["bootstrapDeclined"] = True
+    update_workspace_manifest(workspace_root, {"notion": notion})
+
+
+def record_bootstrap_result(
+    workspace_root: Path | str,
+    *,
+    root_page_id: str,
+    root_page_url: str | None = None,
+    dir_page_ids: dict[str, str] | None = None,
+) -> None:
+    """Persist the Notion page IDs returned from ``notion-create-pages``."""
+    from context_graph_core import (
+        update_workspace_manifest,
+        load_workspace_manifest,
+        now_iso,
+    )
+    manifest = load_workspace_manifest(workspace_root)
+    notion = dict(manifest.get("notion") or {})
+    notion["rootPageId"] = str(root_page_id)
+    if root_page_url:
+        notion["rootPageUrl"] = str(root_page_url)
+    if dir_page_ids:
+        notion["dirPageIds"] = {str(k): str(v) for k, v in dir_page_ids.items()}
+    notion.setdefault("createdAt", now_iso())
+    notion["updatedAt"] = now_iso()
+    update_workspace_manifest(workspace_root, {"notion": notion})
