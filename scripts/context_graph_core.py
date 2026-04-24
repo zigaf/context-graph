@@ -386,6 +386,45 @@ def init_workspace(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def load_workspace_manifest(workspace_root: Path | str) -> dict[str, Any]:
+    """Read the workspace manifest from .context-graph/workspace.json.
+
+    Raises FileNotFoundError when the manifest is missing.
+    """
+    root = Path(str(workspace_root)).resolve()
+    manifest_path = root / ".context-graph" / "workspace.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError(f"No workspace manifest at {manifest_path}")
+    with manifest_path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError(f"Workspace manifest at {manifest_path} is not an object")
+    return data
+
+
+def update_workspace_manifest(
+    workspace_root: Path | str, updates: dict[str, Any]
+) -> dict[str, Any]:
+    """Merge ``updates`` into the manifest at top level (shallow), bump
+    ``updatedAt``, write back atomically (write to .tmp, rename).
+
+    Returns the new manifest. Top-level keys in ``updates`` fully replace
+    existing values — this is shallow merge, not recursive.
+    """
+    root = Path(str(workspace_root)).resolve()
+    manifest = load_workspace_manifest(root)
+    for key, value in updates.items():
+        manifest[key] = value
+    manifest["updatedAt"] = now_iso()
+    manifest_path = root / ".context-graph" / "workspace.json"
+    tmp_path = manifest_path.with_suffix(".json.tmp")
+    with tmp_path.open("w", encoding="utf-8") as f:
+        json.dump(manifest, f, ensure_ascii=True, indent=2)
+        f.write("\n")
+    tmp_path.replace(manifest_path)
+    return manifest
+
+
 def load_schema() -> dict[str, Any]:
     schema_path = project_root() / "docs" / "schema.json"
     with schema_path.open("r", encoding="utf-8") as f:
