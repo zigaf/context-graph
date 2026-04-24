@@ -18,6 +18,17 @@ from classifier_learning import run_full_pass
 from classifier_regions import extract_regions
 from classifier_schema import load_merged_schema
 from classifier_scorer import arbitrate, score_field
+from intent_modes import (
+    IntentMode,
+    apply_marker_weight,
+    apply_type_boost,
+    apply_status_bias,
+    apply_freshness_multiplier,
+    hop_cap_for,
+    hop_penalty_for,
+    is_relation_allowed,
+    resolve_intent,
+)
 
 
 class WorkspaceNotInitializedError(RuntimeError):
@@ -1097,6 +1108,7 @@ def _score_record_detailed(
     query_markers: dict[str, str],
     query_tokens: set[str],
     importance: dict[str, float] | None = None,
+    intent: IntentMode | None = None,
 ) -> dict[str, Any]:
     """Return every number that feeds into a record's retrieval score.
 
@@ -1186,8 +1198,9 @@ def record_weight(
     query_markers: dict[str, str],
     query_tokens: set[str],
     importance: dict[str, float] | None = None,
+    intent: IntentMode | None = None,
 ) -> tuple[float, list[str]]:
-    detail = _score_record_detailed(record, query_markers, query_tokens, importance)
+    detail = _score_record_detailed(record, query_markers, query_tokens, importance, intent)
     return detail["score"], detail["matchedMarkers"]
 
 

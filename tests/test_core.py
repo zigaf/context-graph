@@ -331,5 +331,46 @@ class MarkerImportanceRetrievalTests(unittest.TestCase):
             self.assertEqual(ids[0], "a")
 
 
+class IntentScoringBackwardCompatTests(unittest.TestCase):
+    """Ensure passing intent=None yields byte-identical detail to not
+    passing intent at all."""
+
+    def test_score_record_detailed_intent_none_matches_absent(self):
+        import sys
+        from datetime import datetime, timezone
+        from pathlib import Path
+        from unittest.mock import patch
+        ROOT = Path(__file__).resolve().parents[1]
+        SCRIPTS = ROOT / "scripts"
+        if str(SCRIPTS) not in sys.path:
+            sys.path.insert(0, str(SCRIPTS))
+        from context_graph_core import _score_record_detailed  # noqa: E402
+
+        record = {
+            "id": "r1",
+            "markers": {"type": "bug", "severity": "high", "status": "in-progress"},
+            "tokens": ["webhook", "retry"],
+            "updatedAt": "2025-01-01T00:00:00Z",
+        }
+        qm = {"type": "bug"}
+        qt = {"webhook"}
+
+        # Freeze time so ``recency_score`` — which reads ``datetime.now()``
+        # — returns a byte-identical value across both calls. Without the
+        # patch the two calls diverge by ~1e-16 due to clock drift, which
+        # defeats the strict-equality assertion below.
+        fixed_now = datetime(2026, 4, 24, tzinfo=timezone.utc)
+
+        class _FrozenDT(datetime):
+            @classmethod
+            def now(cls, tz=None):  # noqa: D401
+                return fixed_now if tz is None else fixed_now.astimezone(tz)
+
+        with patch("context_graph_core.datetime", _FrozenDT):
+            a = _score_record_detailed(record, qm, qt, None)
+            b = _score_record_detailed(record, qm, qt, None, intent=None)
+        self.assertEqual(a, b)
+
+
 if __name__ == "__main__":
     unittest.main()
