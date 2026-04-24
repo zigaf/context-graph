@@ -5,6 +5,29 @@ argument-hint: [--mode <name>] <query>  (intent presets: debug, implementation, 
 
 The user wants a compact context pack for the query `$ARGUMENTS`, built from the persisted Context Graph.
 
+## Hashtag syntax (optional)
+
+`$ARGUMENTS` may contain `#tag` tokens that resolve to marker filters.
+Each tag's value is looked up in `docs/schema.json`; the matched axis is
+filled into the `markers` payload that goes to `search_graph`.
+
+Examples:
+
+    /cg-search #rule #payments                  # markers: {type: rule, domain: payments}
+    /cg-search #gotcha #auth                    # markers: {scope: gotcha, domain: auth}
+    /cg-search #intersection #api #webhook      # markers: {scope: intersection, domain: api, artifact: webhook}
+    /cg-search how do we handle #idempotency    # query="how do we handle", markers: {scope: idempotency}
+
+If a `#tag` does not match any schema value, leave it in the query
+verbatim (the user may have made a typo). Repeated tags on the same axis
+let the last one win.
+
+To compute the split call the MCP tool
+`mcp__context-graph__parse_hashtags` with `{"query": $ARGUMENTS}`. The
+tool returns `{"query": "...", "markers": {...}}`. Pass both into
+`search_graph`: `query` becomes the natural-language part, `markers`
+becomes the marker-filter payload.
+
 ## Intent modes (optional)
 
 If the user prefixes the query with `--mode <name>`, extract the value
@@ -25,7 +48,8 @@ Steps:
 
 1. If `$ARGUMENTS` is empty, ask the user for a query and stop.
 2. Call the MCP tool `mcp__context-graph__search_graph` with:
-   - `query`: `$ARGUMENTS` (with any leading `--mode <name>` already stripped per the Intent modes section above)
+   - `query`: the natural-language part returned by `parse_hashtags` (with any leading `--mode <name>` already stripped per the Intent modes section above)
+   - `markers`: the `markers` dict returned by `parse_hashtags`; omit when empty
    - `graphPath`: `./data/graph.json` (default)
    - `limit`: omit unless the user specified one
    - `intentMode`: include only when the user passed `--mode <name>`; otherwise omit entirely so the call falls back to the no-mode default
