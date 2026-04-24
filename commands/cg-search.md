@@ -1,9 +1,25 @@
 ---
-description: Build a context pack for a query from the persisted graph
-argument-hint: <query>
+description: Search the Context Graph for records relevant to a query, optionally under an intent preset.
+argument-hint: [--mode <name>] <query>  (intent presets: debug, implementation, architecture, product)
 ---
 
 The user wants a compact context pack for the query `$ARGUMENTS`, built from the persisted Context Graph.
+
+## Intent modes (optional)
+
+If the user prefixes the query with `--mode <name>`, extract the value
+and pass it to `build_context_pack` as `intentMode`. Valid presets:
+`debug`, `implementation`, `architecture`, `product`. Any other value
+— surface the error from the tool (invalid preset raises ValueError
+listing the allowed names).
+
+Example:
+
+    /cg-search --mode architecture payments idempotency
+
+Strip `--mode <name>` from the query before passing the remainder as
+the `query` string. If no `--mode` prefix is present, omit `intentMode`
+from the payload.
 
 Steps:
 
