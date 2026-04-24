@@ -53,7 +53,7 @@ Follow this exact sequence:
 When the user asks "сделай ревью", "review this", "проверь это", or similar:
 
 1. Determine the scope (file path, module, or topic mentioned).
-2. Call `mcp__context-graph__search_graph` with `intentMode="architecture"` and a query targeting the scope. Pull all `type=rule`, `type=decision`, `type=convention` records that apply.
+2. Call `mcp__context-graph__search_graph` with `intentMode="architecture"` and a query targeting the scope. Pull `type=rule` and `type=decision` records — conventions are stored as `type=rule, scope=convention`, so the rule pass already covers them. If you want only conventions, add `markers={"scope": "convention"}` to narrow.
 3. Apply them to the review explicitly — cite which rule each finding comes from. If you find an issue not covered by an existing rule, capture it as a NEW rule per the protocol above.
 4. After the review, if any new rules were captured, push them to Notion (step 5 of the capture protocol).
 

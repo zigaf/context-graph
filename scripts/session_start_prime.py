@@ -49,8 +49,10 @@ def prime_session(workspace_root: Path | None = None) -> dict[str, Any]:
     except FileNotFoundError:
         return {"workspace": None}
 
-    # Pull all type=rule, type=decision, type=convention records the local
-    # graph has — these become the rule book Claude sees at session start.
+    # Pull all type=rule and type=decision records the local graph has —
+    # these become the rule book Claude sees at session start. Conventions
+    # are stored as type=rule + scope=convention per the curator skill, so
+    # the type=rule pass already covers them.
     rules: list[dict[str, Any]] = []
     try:
         for marker_type in ("rule", "decision"):
