@@ -1120,7 +1120,19 @@ def _score_record_detailed(
     """
     markers = record.get("markers", {})
     matched_markers = [key for key, value in query_markers.items() if markers.get(key) == value]
+
+    # Per-axis marker weight under intent is applied before the weighted
+    # aggregate so the existing exactness pipeline stays one step.
+    def _per_axis_intent_factor(axis: str) -> float:
+        return apply_marker_weight(axis, intent)
+
+    per_axis_intent: dict[str, float] = {a: _per_axis_intent_factor(a) for a in matched_markers}
     exactness = _weighted_marker_score(matched_markers, query_markers, importance or {})
+    # Fold the per-axis intent multipliers into exactness: take the
+    # average of per-axis factors as the exactness multiplier so a match
+    # on a heavily-weighted axis boosts exactness proportionally.
+    if per_axis_intent:
+        exactness *= sum(per_axis_intent.values()) / len(per_axis_intent)
 
     record_tokens = set(record.get("tokens", []))
     matched_tokens = sorted(query_tokens & record_tokens)
@@ -1144,52 +1156,68 @@ def _score_record_detailed(
     }.get(status_value, 0.25)
     freshness = recency_score(record.get("updatedAt") or record.get("classifiedAt"))
 
-    total = (
+    base_total = (
         exactness * 0.45
         + token_overlap * 0.2
         + severity_weight * 0.15
         + status_weight * 0.1
         + freshness * 0.1
     )
+
+    # Intent post-multipliers, applied to the base_total in order:
+    # markerWeights already folded into exactness above.
+    type_boost_factor = apply_type_boost(markers.get("type"), intent)
+    status_bias_factor = apply_status_bias(status_value, intent)
+    freshness_mult_factor = apply_freshness_multiplier(1.0, intent)
+
+    total = base_total * type_boost_factor * status_bias_factor * freshness_mult_factor
     score = round(total, 3)
+
+    factors: dict[str, Any] = {
+        "markerMatch": {
+            "matched": matched_markers,
+            "weight": 0.45,
+            "value": exactness,
+            "contribution": round(exactness * 0.45, 6),
+        },
+        "tokenMatch": {
+            "matched": matched_tokens,
+            "queryTokenCount": len(query_tokens),
+            "recordTokenCount": len(record_tokens),
+            "weight": 0.2,
+            "value": token_overlap,
+            "contribution": round(token_overlap * 0.2, 6),
+        },
+        "severity": {
+            "value": severity_value,
+            "weight": 0.15,
+            "factor": severity_weight,
+            "contribution": round(severity_weight * 0.15, 6),
+        },
+        "status": {
+            "value": status_value,
+            "weight": 0.1,
+            "factor": status_weight,
+            "contribution": round(status_weight * 0.1, 6),
+        },
+        "freshness": {
+            "weight": 0.1,
+            "factor": freshness,
+            "contribution": round(freshness * 0.1, 6),
+            "updatedAt": record.get("updatedAt") or record.get("classifiedAt"),
+        },
+    }
+    if intent is not None:
+        factors["intentMarkerMultiplier"] = per_axis_intent
+        factors["intentTypeBoost"] = {"type": markers.get("type"), "value": type_boost_factor}
+        factors["intentStatusBias"] = {"status": status_value, "value": status_bias_factor}
+        factors["intentFreshnessMultiplier"] = {"value": freshness_mult_factor}
+
     return {
         "score": score,
         "matchedMarkers": matched_markers,
         "matchedTokens": matched_tokens,
-        "factors": {
-            "markerMatch": {
-                "matched": matched_markers,
-                "weight": 0.45,
-                "value": exactness,
-                "contribution": round(exactness * 0.45, 6),
-            },
-            "tokenMatch": {
-                "matched": matched_tokens,
-                "queryTokenCount": len(query_tokens),
-                "recordTokenCount": len(record_tokens),
-                "weight": 0.2,
-                "value": token_overlap,
-                "contribution": round(token_overlap * 0.2, 6),
-            },
-            "severity": {
-                "value": severity_value,
-                "weight": 0.15,
-                "factor": severity_weight,
-                "contribution": round(severity_weight * 0.15, 6),
-            },
-            "status": {
-                "value": status_value,
-                "weight": 0.1,
-                "factor": status_weight,
-                "contribution": round(status_weight * 0.1, 6),
-            },
-            "freshness": {
-                "weight": 0.1,
-                "factor": freshness,
-                "contribution": round(freshness * 0.1, 6),
-                "updatedAt": record.get("updatedAt") or record.get("classifiedAt"),
-            },
-        },
+        "factors": factors,
     }
 
 
