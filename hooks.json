@@ -6,8 +6,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "echo '{\"query\":\"\",\"limit\":1}' | python3 \"${CLAUDE_PLUGIN_ROOT:-.}/scripts/context_graph_cli.py\" search-graph > /dev/null 2>&1 || true",
-            "timeout": 5
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-.}/scripts/session_start_prime.py\" 2>/dev/null || true",
+            "timeout": 8
           }
         ]
       }
