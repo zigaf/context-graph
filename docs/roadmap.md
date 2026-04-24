@@ -94,8 +94,7 @@ Acceptance: running sync twice in a row is a no-op, and a Notion edit reflects i
 
 Status: in progress
 
-- [ ] Add query intent modes: `debug`, `implementation`, `architecture`, `product`
-  - Spec: each mode changes which markers dominate ranking, which relation types are followed, and how many hops are allowed
+- [x] Add query intent modes: `debug`, `implementation`, `architecture`, `product` — presets in `scripts/intent_modes.py`, `intentMode`/`intentOverride` on `build_context_pack` / `search_graph` / `inspect_record`, eval harness routes by declared intent (baseline rewritten with no per-query precision regression)
 - [x] Add freshness decay tuning by record type — `FRESHNESS_HALF_LIFE_DAYS` constant + `freshnessHalfLifeDays` payload override; rules/decisions decay over a year, tasks/incidents over a month
 - [x] Add relation distance penalties for hops beyond one — `HOP_PENALTY = 0.5` per hop; `build_context_pack` now does two-pass (direct scoring + traversal frontier); documented in `docs/retrieval.md`
 - [x] Promote repeated bugs into reusable rules and decisions
@@ -104,7 +103,7 @@ Status: in progress
 
 Eval harness confirms no regression: mean precision@k 0.575 → 0.683, pack/full-dump ratio 0.760 → 0.600 (smaller packs, same or better hits).
 
-Acceptance: `build_context_pack` returns visibly different results for the same query when intent mode is switched. (Query intent modes still open — requires design discussion.)
+Acceptance: `build_context_pack` returns visibly different results for the same query when intent mode is switched.
 
 ## Phase 6 - Lifecycle and safety
 

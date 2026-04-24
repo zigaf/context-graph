@@ -110,3 +110,27 @@ regression and a surprising `inspect-record` output will always point at the
 same underlying change. If `python3 scripts/context_graph_cli.py eval`
 passes but `inspect-record` now reports different numbers for a specific
 record, the scoring math has not changed — only the surrounding graph has.
+
+## Inspecting under an intent mode
+
+`inspect-record` accepts `--mode <preset>` (and `--override <path>` for
+a JSON override file). The report shows the four intent factors that
+were applied to the score:
+
+```
+$ python3 scripts/context_graph_cli.py inspect-record \
+    --graph .context-graph/graph.json \
+    --record r-webhook-crash \
+    --query "webhook retry" \
+    --mode debug
+...
+  intentMarkerMultiplier:
+    severity: 2.5
+    type: 2.0
+  intentTypeBoost: bug -> 1.5
+  intentStatusBias: in-progress -> 1.5
+  intentFreshnessMultiplier: 1.5
+```
+
+Use this when a record ranks unexpectedly under a given mode — the
+factor breakdown tells you which preset knob did it.
