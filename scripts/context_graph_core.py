@@ -1123,14 +1123,17 @@ def _score_record_detailed(
 
     # Per-axis marker weight under intent is applied before the weighted
     # aggregate so the existing exactness pipeline stays one step.
-    def _per_axis_intent_factor(axis: str) -> float:
-        return apply_marker_weight(axis, intent)
-
-    per_axis_intent: dict[str, float] = {a: _per_axis_intent_factor(a) for a in matched_markers}
+    per_axis_intent: dict[str, float] = {
+        a: apply_marker_weight(a, intent) for a in matched_markers
+    }
     exactness = _weighted_marker_score(matched_markers, query_markers, importance or {})
-    # Fold the per-axis intent multipliers into exactness: take the
-    # average of per-axis factors as the exactness multiplier so a match
-    # on a heavily-weighted axis boosts exactness proportionally.
+    # Fold the per-axis intent multipliers into exactness by MEAN (not
+    # product, not importance-weighted sum). Mean keeps each matched
+    # axis's intent signal comparable regardless of learned
+    # markerImportance weights: a 2x intent boost on a low-importance
+    # axis should not be dominated by the importance weighting that
+    # _weighted_marker_score already applies. See spec §5.2 and the
+    # plan's Task 8 for the chosen contract.
     if per_axis_intent:
         exactness *= sum(per_axis_intent.values()) / len(per_axis_intent)
 
