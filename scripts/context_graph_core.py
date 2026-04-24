@@ -53,6 +53,41 @@ def require_workspace(start: Path | None = None) -> Path:
 INFERRED_EDGE_TTL_DAYS = 30
 
 
+# Per-type half-life (in days) used by ``type_freshness_factor`` when
+# ``build_context_pack`` applies the freshness multiplier. The multiplier is
+# ``0.5 ** (age_days / half_life)`` so larger half-lives decay more slowly.
+# ``build_context_pack`` accepts a ``freshnessHalfLifeDays`` payload override
+# that overlays these defaults. Missing keys fall back to ``default``.
+#
+# Age is measured from, in order of preference:
+#   1. ``record["revision"]["updatedAt"]`` (stamped by ``merge_record``)
+#   2. ``record["source"]["metadata"]["last_edited_time"]`` (upstream mtime)
+#   3. ``record["classifiedAt"]`` (stamped by ``classify_record``)
+# The first timestamp that parses wins; records without any timestamp get a
+# factor of 1.0 (no decay) so fixtures without stamps are not penalized.
+FRESHNESS_HALF_LIFE_DAYS: dict[str, float] = {
+    "rule": 365.0,
+    "decision": 180.0,
+    "architecture": 180.0,
+    "pattern": 180.0,
+    "task": 30.0,
+    "incident": 30.0,
+    "bug": 30.0,
+    "default": 60.0,
+}
+
+
+# Multiplicative penalty applied per hop beyond the first. Applied as
+# ``score *= HOP_PENALTY ** max(0, hop_count - 1)`` where hop_count is:
+#   0 = direct query match (no hop)
+#   1 = one-hop neighbor of a direct match via an explicit relation
+#   2+ = multi-hop
+# Today's traversal cap in ``build_context_pack`` is 1 hop (one-hop neighbors
+# are pulled in when the caller opts in via ``hopTraversal``). The hook is in
+# place so later phases can raise the cap without rewriting scoring.
+HOP_PENALTY: float = 0.5
+
+
 # Module-level redactor registry. Redactors receive a shallow copy of a ranked
 # context-pack item and may return a new dict. Underlying graph records must
 # never be mutated by a redactor; callers in build_context_pack pass copies.
@@ -375,6 +410,81 @@ def recency_score(value: str | None) -> float:
         return 0.0
     age_days = max((datetime.now(timezone.utc) - dt).total_seconds() / 86400.0, 0.0)
     return math.exp(-age_days / 30.0)
+
+
+def _record_age_timestamp(record: dict[str, Any]) -> str | None:
+    """Return the ISO-8601 string used as the record's age anchor.
+
+    Preference order, documented in ``FRESHNESS_HALF_LIFE_DAYS``:
+      1. ``revision.updatedAt``
+      2. ``source.metadata.last_edited_time``
+      3. ``classifiedAt``
+    Returns ``None`` when none of these parse. Callers that need an explicit
+    anchor should prefer this helper so freshness decay and other time-based
+    signals stay consistent.
+    """
+    candidates: list[str | None] = [
+        record.get("revision", {}).get("updatedAt") if isinstance(record.get("revision"), dict) else None,
+        (
+            record.get("source", {}).get("metadata", {}).get("last_edited_time")
+            if isinstance(record.get("source", {}).get("metadata"), dict)
+            else None
+        ),
+        record.get("classifiedAt"),
+        record.get("updatedAt"),
+    ]
+    for value in candidates:
+        if value and parse_dt(value):
+            return value
+    return None
+
+
+def type_freshness_factor(
+    record: dict[str, Any],
+    half_life_map: dict[str, float] | None = None,
+) -> float:
+    """Return a 0..1 decay multiplier for ``record`` based on its type-specific
+    half-life. Returns 1.0 (no decay) when no timestamp is parseable.
+
+    Formula: ``0.5 ** (age_days / half_life)``. Age is read via
+    ``_record_age_timestamp``. The half-life comes from ``half_life_map`` keyed
+    by ``markers.type`` and falls back to the ``default`` key.
+    """
+    stamp = _record_age_timestamp(record)
+    if not stamp:
+        return 1.0
+    dt = parse_dt(stamp)
+    if not dt:
+        return 1.0
+    age_days = max((datetime.now(timezone.utc) - dt).total_seconds() / 86400.0, 0.0)
+    effective_map = dict(FRESHNESS_HALF_LIFE_DAYS)
+    if half_life_map:
+        for key, value in half_life_map.items():
+            try:
+                effective_map[str(key)] = float(value)
+            except (TypeError, ValueError):
+                continue
+    markers = record.get("markers", {}) if isinstance(record.get("markers"), dict) else {}
+    record_type = str(markers.get("type") or "")
+    half_life = float(effective_map.get(record_type, effective_map.get("default", 60.0)))
+    if half_life <= 0:
+        return 1.0
+    return 0.5 ** (age_days / half_life)
+
+
+def apply_hop_penalty(score: float, hop_count: int, penalty: float | None = None) -> float:
+    """Multiply ``score`` by the hop penalty factor.
+
+    ``hop_count`` convention: 0 = direct query match, 1 = one-hop neighbor,
+    2+ = multi-hop. Penalty is applied as ``penalty ** max(0, hop_count - 1)``
+    so hops 0 and 1 keep their score (no penalty for the first hop) and hops
+    2+ are reduced by an additional factor per step.
+    """
+    effective = float(penalty) if penalty is not None else HOP_PENALTY
+    if effective <= 0:
+        return score
+    hops_beyond_first = max(0, int(hop_count) - 1)
+    return score * (effective ** hops_beyond_first)
 
 
 def normalize_marker(value: str, allowed: list[str] | None = None) -> str:
@@ -1099,25 +1209,151 @@ def build_context_pack(payload: dict[str, Any], schema: dict[str, Any] | None = 
     limit = int(payload.get("limit", 8))
     importance = _load_importance(workspace_start)
 
-    ranked: list[dict[str, Any]] = []
-    for record in records:
-        score, matched_markers = record_weight(record, query_markers, query_tokens, importance)
-        if score <= 0:
-            continue
+    # Freshness half-life overrides (``null`` or missing uses defaults).
+    half_life_override_raw = payload.get("freshnessHalfLifeDays")
+    half_life_override: dict[str, float] | None = None
+    if isinstance(half_life_override_raw, dict):
+        half_life_override = {}
+        for key, value in half_life_override_raw.items():
+            try:
+                half_life_override[str(key)] = float(value)
+            except (TypeError, ValueError):
+                continue
+
+    # Hop penalty override + traversal config. Traversal cap is 1 today (we
+    # only reach one-hop neighbors of direct matches). The scoring hook for
+    # hops 2+ is in place so later phases can raise the cap.
+    hop_penalty_raw = payload.get("hopPenalty")
+    hop_penalty: float | None = None
+    if hop_penalty_raw is not None:
+        try:
+            hop_penalty = float(hop_penalty_raw)
+        except (TypeError, ValueError):
+            hop_penalty = None
+    traversal_cfg = payload.get("hopTraversal") or {}
+    try:
+        max_hops = int(traversal_cfg.get("maxHops", 1)) if isinstance(traversal_cfg, dict) else 1
+    except (TypeError, ValueError):
+        max_hops = 1
+    max_hops = max(0, max_hops)
+
+    records_by_id = {record.get("id"): record for record in records if record.get("id")}
+
+    def _score_record(record: dict[str, Any]) -> tuple[float, list[str]]:
+        raw, matched = record_weight(record, query_markers, query_tokens, importance)
+        factor = type_freshness_factor(record, half_life_override)
+        # Keep the internal score scale identical (3dp) so downstream
+        # thresholds like the 0.3 supporting cutoff still work.
+        return round(raw * factor, 3), matched
+
+    def _has_query_relevance(record: dict[str, Any], matched: list[str]) -> bool:
+        """A record is a hop-0 direct match only if it has some actual
+        query signal: at least one matched marker or one overlapping token.
+        The baseline score from status/freshness alone is not enough; without
+        this gate, any record with any timestamp would be a direct match and
+        the one-hop traversal hook could never fire.
+        """
+        if matched:
+            return True
+        record_tokens = set(record.get("tokens", []) or [])
+        if query_tokens and record_tokens and (query_tokens & record_tokens):
+            return True
+        return False
+
+    def _build_item(
+        record: dict[str, Any],
+        score: float,
+        matched: list[str],
+        hop_count: int,
+    ) -> dict[str, Any]:
         item: dict[str, Any] = {
             "id": record.get("id"),
             "title": record.get("title"),
             "score": score,
-            "matchedMarkers": matched_markers,
+            "matchedMarkers": matched,
             "hierarchyPath": record.get("hierarchy", {}).get("path", ""),
             "markers": record.get("markers", {}),
             "relations": record.get("relations", {}),
+            "hopCount": hop_count,
         }
         if _REDACTORS:
             # Redactors operate on content, so we surface it only when needed.
             item["content"] = record.get("content")
-        ranked.append(item)
+        return item
 
+    # Pass 1: score every candidate record against the query. Records with
+    # actual query relevance (matched markers or shared tokens) become hop-0
+    # direct matches. Records that score above zero only from the baseline
+    # (status default, freshness, etc.) are held aside and may still be
+    # pulled in via one-hop traversal below. Freshness is applied already by
+    # ``_score_record``; the hop penalty is a no-op at hop 0.
+    ranked_by_id: dict[str, dict[str, Any]] = {}
+    # ``seed_scores`` tracks the final score of every record in the pack so
+    # that one-hop neighbors can inherit a decayed share of it when their own
+    # query relevance is zero. This is what keeps the "direct > one-hop >
+    # two-hop" ordering observable even when the neighbors share no marker or
+    # token with the query.
+    seed_scores: dict[str, float] = {}
+    direct_hit_ids: list[str] = []
+    effective_penalty = float(hop_penalty) if hop_penalty is not None else HOP_PENALTY
+    for record in records:
+        rid = record.get("id")
+        if not rid:
+            continue
+        score, matched = _score_record(record)
+        if score <= 0 or not _has_query_relevance(record, matched):
+            continue
+        item = _build_item(record, score, matched, hop_count=0)
+        ranked_by_id[rid] = item
+        seed_scores[rid] = score
+        direct_hit_ids.append(rid)
+
+    # Pass 2: expand neighbors of direct matches through explicit relations.
+    # A neighbor's score is ``max(own_query_score_with_beyond_first_penalty,
+    # inherited_seed_score * penalty ** hop_count)``. This means a neighbor
+    # that happens to match the query keeps its higher raw score; a neighbor
+    # that does not match the query at all still appears with a decayed
+    # inherited score so downstream callers can see the relation chain.
+    # The visible traversal cap is ``max_hops`` (default 1) today. The
+    # scoring hook handles any depth so later phases can raise the cap.
+    frontier: list[tuple[str, int]] = [(rid, 0) for rid in direct_hit_ids]
+    while frontier and max_hops > 0:
+        next_frontier: list[tuple[str, int]] = []
+        for seed_id, seed_hop in frontier:
+            if seed_hop >= max_hops:
+                continue
+            seed_record = records_by_id.get(seed_id)
+            if not seed_record:
+                continue
+            seed_score_value = seed_scores.get(seed_id, 0.0)
+            for rel in normalize_explicit_relations(seed_record):
+                target_id = rel.get("target")
+                if not target_id or target_id in ranked_by_id:
+                    continue
+                target_record = records_by_id.get(target_id)
+                if not target_record:
+                    continue
+                own_score, matched = _score_record(target_record)
+                hop_count = seed_hop + 1
+                own_penalized = apply_hop_penalty(own_score, hop_count=hop_count, penalty=hop_penalty)
+                # Inheritance decays by one penalty step per edge traversed,
+                # not by hop_count absolute: the seed score already reflects
+                # its own hop-level decay.
+                inherited = (
+                    seed_score_value * effective_penalty
+                    if effective_penalty > 0
+                    else seed_score_value
+                )
+                combined = round(max(own_penalized, inherited), 3)
+                if combined <= 0:
+                    continue
+                item = _build_item(target_record, combined, matched, hop_count=hop_count)
+                ranked_by_id[target_id] = item
+                seed_scores[target_id] = combined
+                next_frontier.append((target_id, hop_count))
+        frontier = next_frontier
+
+    ranked = list(ranked_by_id.values())
     ranked.sort(key=lambda item: item["score"], reverse=True)
     top = ranked[:limit]
     supporting = [item for item in ranked[limit : limit + 5] if item["score"] >= 0.3]
@@ -1194,6 +1430,106 @@ def marker_conflicts(records: list[dict[str, Any]]) -> dict[str, list[str]]:
         values = sorted({str(record.get("markers", {}).get(key)) for record in records if record.get("markers", {}).get(key)})
         if len(values) > 1:
             conflicts[key] = values
+    return conflicts
+
+
+# Tokens that, when they appear within a short window before a keyword, mark
+# the keyword as negated in that record. Deliberately small and literal so
+# the signal is deterministic and auditable.
+_CONTENT_NEGATION_WORDS: frozenset[str] = frozenset({
+    "not", "no", "never", "without", "avoid", "stop", "skip", "don't", "dont",
+})
+
+
+def _tokens_with_negation(text: str) -> list[tuple[str, bool]]:
+    """Return a list of ``(token, is_negated)`` pairs for ``text``.
+
+    Negation rule: a negation word ("not", "never", "avoid", ...) scopes
+    only the **next content word** — stopwords like "the", "a", "for" are
+    skipped and do not end the scope. The scope ends at the first non-
+    stopword token, which is marked as negated. This keeps phrases like
+    "do not retry the payment webhook" from negating every token after
+    "not" — only "retry" is negated, "payment" and "webhook" are not.
+    """
+    cleaned = re.sub(r"[^a-z0-9\s']", " ", text.lower())
+    tokens = [t for t in cleaned.split() if t]
+    out: list[tuple[str, bool]] = []
+    pending_negation = False
+    for token in tokens:
+        if token in _CONTENT_NEGATION_WORDS:
+            pending_negation = True
+            out.append((token, False))
+            continue
+        if pending_negation and token in STOPWORDS:
+            # Don't consume the negation on a stopword; keep waiting.
+            out.append((token, False))
+            continue
+        if pending_negation:
+            out.append((token, True))
+            pending_negation = False
+        else:
+            out.append((token, False))
+    return out
+
+
+def detect_content_conflicts(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return deterministic content-level conflicts between records.
+
+    Simplest implementation: scan each record for a verb-like token (length
+    >= 4, not a stopword) that appears without negation in one record and
+    with negation ("do not ...", "never ...", "avoid ...") in another. This
+    surfaces pairs like "retry" vs "do not retry" without needing a parser.
+
+    Output shape per conflict:
+    ``{"kind": "content-negation", "token": "retry",
+       "affirmative": ["<id>", ...], "negated": ["<id>", ...],
+       "recordIds": [...]}``
+    The ``recordIds`` field is a superset convenience for consumers that just
+    want to know which records were involved regardless of stance.
+    """
+    if not records:
+        return []
+    affirmative_by_token: dict[str, list[str]] = {}
+    negated_by_token: dict[str, list[str]] = {}
+    for record in records:
+        rid = record.get("id")
+        if not rid:
+            continue
+        text = str(record.get("content") or "")
+        if not text:
+            text = str(record.get("title") or "")
+        token_stances: dict[str, set[str]] = {}  # token -> {"affirmative"} / {"negated"} / both
+        for token, is_negated in _tokens_with_negation(text):
+            if len(token) < 4 or token in STOPWORDS:
+                continue
+            stance = "negated" if is_negated else "affirmative"
+            token_stances.setdefault(token, set()).add(stance)
+        for token, stances in token_stances.items():
+            if "affirmative" in stances:
+                affirmative_by_token.setdefault(token, []).append(str(rid))
+            if "negated" in stances:
+                negated_by_token.setdefault(token, []).append(str(rid))
+    conflicts: list[dict[str, Any]] = []
+    for token in sorted(set(affirmative_by_token.keys()) & set(negated_by_token.keys())):
+        affirmative_ids = sorted(set(affirmative_by_token[token]))
+        negated_ids = sorted(set(negated_by_token[token]))
+        if not affirmative_ids or not negated_ids:
+            continue
+        # Drop cases where the same record appears on both sides — without a
+        # cross-record disagreement there is no real conflict to surface.
+        only_affirmative = sorted(set(affirmative_ids) - set(negated_ids))
+        only_negated = sorted(set(negated_ids) - set(affirmative_ids))
+        if not only_affirmative or not only_negated:
+            continue
+        conflicts.append(
+            {
+                "kind": "content-negation",
+                "token": token,
+                "affirmative": only_affirmative,
+                "negated": only_negated,
+                "recordIds": sorted(set(only_affirmative) | set(only_negated)),
+            }
+        )
     return conflicts
 
 
@@ -1339,6 +1675,149 @@ def generate_promoted_title(common: dict[str, Any], record_count: int, output_ty
     return " ".join(word.capitalize() for word in parts)
 
 
+def _build_promoted_record(
+    cohort: list[dict[str, Any]],
+    *,
+    output_type: str,
+    payload: dict[str, Any],
+    schema: dict[str, Any],
+    scope_suffix: str = "",
+    scope_note: str = "",
+) -> dict[str, Any]:
+    """Build a single promoted record for ``cohort``.
+
+    ``scope_suffix`` is appended to the title when the cohort is a narrower
+    slice of a larger, conflicting cohort ("for webhook delivery path" vs
+    "for background replay"). ``scope_note`` is inserted into the content
+    body for the same reason. Both default to empty strings so the legacy
+    single-cohort promotion path produces identical output.
+    """
+    common = common_markers(cohort)
+    base_title = str(payload.get("title") or generate_promoted_title(common, len(cohort), output_type))
+    title = f"{base_title} {scope_suffix}".strip() if scope_suffix else base_title
+    record_id = (
+        str(payload.get("id"))
+        if payload.get("id") and not scope_suffix
+        else f"promoted:{slugify(title)}"
+    )
+    keywords = shared_keywords(cohort)
+    highest_severity = strongest_severity(cohort)
+    goal = str(payload.get("goal") or majority_marker(cohort, "goal") or "prevent-regression")
+    cohort_marker_conflicts = marker_conflicts(cohort)
+    cohort_quality = promotion_quality(common, cohort_marker_conflicts, cohort)
+    cohort_suggestions = split_suggestions(cohort, cohort_marker_conflicts)
+
+    promoted_markers: dict[str, Any] = {
+        "type": output_type,
+        "goal": goal,
+        "status": "done",
+    }
+    for key in ("domain", "flow", "artifact", "project", "room", "scope"):
+        if common.get(key):
+            promoted_markers[key] = common[key]
+    if highest_severity:
+        promoted_markers["severity"] = highest_severity
+
+    summary_lines = [
+        f"Promoted from {len(cohort)} related records.",
+        f"Promotion quality: {cohort_quality['recommendation']} ({cohort_quality['score']}).",
+    ]
+    if scope_note:
+        summary_lines.extend(["", scope_note])
+    summary_lines.extend(["", "Common markers:"])
+    for key, value in sorted(common.items()):
+        summary_lines.append(f"- {key}: {value}")
+    if cohort_marker_conflicts:
+        summary_lines.extend(["", "Conflicts:"])
+        for key, values in sorted(cohort_marker_conflicts.items()):
+            summary_lines.append(f"- {key}: {', '.join(values)}")
+    if cohort_suggestions:
+        summary_lines.extend(["", "Split suggestions:"])
+        for suggestion in cohort_suggestions:
+            summary_lines.append(f"- by {suggestion['marker']}: {suggestion['groupCount']} groups")
+    if keywords:
+        summary_lines.extend(["", "Shared keywords:", f"- {', '.join(keywords)}"])
+    summary_lines.extend(
+        [
+            "",
+            "Derived from:",
+            *[f"- {record['id']}: {record.get('title', '')}" for record in cohort],
+        ]
+    )
+
+    promoted_record = classify_record(
+        {
+            "record": {
+                "id": record_id,
+                "title": title,
+                "content": "\n".join(summary_lines).strip(),
+                "markers": promoted_markers,
+                "relations": {
+                    "explicit": [{"type": "derived_from", "target": record["id"]} for record in cohort],
+                    "inferred": [],
+                },
+                "source": {
+                    "system": "context-graph",
+                    "path": f"promoted/{slugify(title)}.json",
+                    "generatedBy": "promote_pattern",
+                    "metadata": {
+                        "promotionQuality": cohort_quality,
+                        "splitSuggestions": cohort_suggestions,
+                    },
+                },
+            }
+        },
+        schema,
+    )
+    for marker_name in ("artifact", "project", "room", "scope"):
+        if marker_name not in promoted_markers and marker_name in promoted_record["markers"]:
+            promoted_record["markers"].pop(marker_name, None)
+    promoted_record["hierarchy"] = derive_hierarchy(promoted_record["markers"], schema)
+    return promoted_record
+
+
+def _split_cohort_by_content_conflict(
+    records: list[dict[str, Any]],
+    content_conflicts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Split ``records`` into sub-cohorts that agree on the dominant content
+    conflict. Returns a list of ``{"stance", "token", "records"}`` dicts.
+
+    Falls back to a single ``agnostic`` group when no usable split can be
+    produced (e.g., every record sits on both sides of every conflict).
+    """
+    if not content_conflicts:
+        return [{"stance": "all", "token": "", "records": records}]
+    # Use the conflict that partitions the cohort most evenly — this is the
+    # axis most worth splitting on. Ties break alphabetically on the token
+    # for determinism.
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for conflict in content_conflicts:
+        a = len(conflict.get("affirmative", []))
+        n = len(conflict.get("negated", []))
+        if a == 0 or n == 0:
+            continue
+        balance = min(a, n) / max(a, n)
+        scored.append((balance, conflict))
+    if not scored:
+        return [{"stance": "all", "token": "", "records": records}]
+    scored.sort(key=lambda item: (-item[0], item[1]["token"]))
+    primary = scored[0][1]
+    token = primary["token"]
+    affirmative_ids = set(primary.get("affirmative", []))
+    negated_ids = set(primary.get("negated", []))
+    affirmative_records = [r for r in records if str(r.get("id")) in affirmative_ids]
+    negated_records = [r for r in records if str(r.get("id")) in negated_ids]
+    result: list[dict[str, Any]] = []
+    if affirmative_records:
+        result.append({"stance": "affirmative", "token": token, "records": affirmative_records})
+    if negated_records:
+        result.append({"stance": "negated", "token": token, "records": negated_records})
+    if not result:
+        return [{"stance": "all", "token": "", "records": records}]
+    return result
+
+
 def promote_pattern(payload: dict[str, Any], schema: dict[str, Any] | None = None) -> dict[str, Any]:
     schema = schema or load_schema()
     graph_path = payload.get("graphPath")
@@ -1354,95 +1833,73 @@ def promote_pattern(payload: dict[str, Any], schema: dict[str, Any] | None = Non
 
     common = common_markers(source_records)
     output_type = str(payload.get("outputType") or "rule")
-    title = str(payload.get("title") or generate_promoted_title(common, len(source_records), output_type))
-    record_id = str(payload.get("id") or f"promoted:{slugify(title)}")
     keywords = shared_keywords(source_records)
-    highest_severity = strongest_severity(source_records)
-    goal = str(payload.get("goal") or majority_marker(source_records, "goal") or "prevent-regression")
-    conflicts = marker_conflicts(source_records)
-    quality = promotion_quality(common, conflicts, source_records)
-    suggestions = split_suggestions(source_records, conflicts)
+    marker_conflict_map = marker_conflicts(source_records)
+    quality = promotion_quality(common, marker_conflict_map, source_records)
+    suggestions = split_suggestions(source_records, marker_conflict_map)
+    content_conflicts = detect_content_conflicts(source_records)
 
-    promoted_markers = {
-        "type": output_type,
-        "goal": goal,
-        "status": "done",
-    }
-    for key in ("domain", "flow", "artifact", "project", "room", "scope"):
-        if common.get(key):
-            promoted_markers[key] = common[key]
-    if highest_severity:
-        promoted_markers["severity"] = highest_severity
-
-    summary_lines = [
-        f"Promoted from {len(source_records)} related records.",
-        f"Promotion quality: {quality['recommendation']} ({quality['score']}).",
-        "",
-        "Common markers:",
+    # Decide whether to split. We only split when we have a usable content
+    # conflict, i.e. at least one record on each side of the same token.
+    splittable_conflicts = [
+        c for c in content_conflicts
+        if c.get("affirmative") and c.get("negated")
     ]
-    for key, value in sorted(common.items()):
-        summary_lines.append(f"- {key}: {value}")
-    if conflicts:
-        summary_lines.extend(["", "Conflicts:"])
-        for key, values in sorted(conflicts.items()):
-            summary_lines.append(f"- {key}: {', '.join(values)}")
-    if suggestions:
-        summary_lines.extend(["", "Split suggestions:"])
-        for suggestion in suggestions:
-            summary_lines.append(f"- by {suggestion['marker']}: {suggestion['groupCount']} groups")
-    if keywords:
-        summary_lines.extend(["", "Shared keywords:", f"- {', '.join(keywords)}"])
-    summary_lines.extend(
-        [
-            "",
-            "Derived from:",
-            *[f"- {record['id']}: {record.get('title', '')}" for record in source_records],
-        ]
-    )
+    promoted_records: list[dict[str, Any]] = []
+    if splittable_conflicts:
+        sub_cohorts = _split_cohort_by_content_conflict(source_records, splittable_conflicts)
+        for sub in sub_cohorts:
+            stance = sub["stance"]
+            token = sub["token"]
+            if stance == "affirmative":
+                scope_suffix = f"(when {token})"
+                scope_note = f"Narrower scope: records that affirm '{token}'."
+            elif stance == "negated":
+                scope_suffix = f"(when not {token})"
+                scope_note = f"Narrower scope: records that negate '{token}'."
+            else:
+                scope_suffix = ""
+                scope_note = ""
+            promoted = _build_promoted_record(
+                sub["records"],
+                output_type=output_type,
+                payload=payload,
+                schema=schema,
+                scope_suffix=scope_suffix,
+                scope_note=scope_note,
+            )
+            promoted_records.append(promoted)
+    else:
+        promoted_records.append(
+            _build_promoted_record(
+                source_records,
+                output_type=output_type,
+                payload=payload,
+                schema=schema,
+            )
+        )
 
-    promoted_record = classify_record(
-        {
-            "record": {
-                "id": record_id,
-                "title": title,
-                "content": "\n".join(summary_lines).strip(),
-                "markers": promoted_markers,
-                "relations": {
-                    "explicit": [{"type": "derived_from", "target": record["id"]} for record in source_records],
-                    "inferred": [],
-                },
-                "source": {
-                    "system": "context-graph",
-                    "path": f"promoted/{slugify(title)}.json",
-                    "generatedBy": "promote_pattern",
-                    "metadata": {
-                        "promotionQuality": quality,
-                        "splitSuggestions": suggestions,
-                    },
-                },
-            }
-        },
-        schema,
-    )
-    for marker_name in ("artifact", "project", "room", "scope"):
-        if marker_name not in promoted_markers and marker_name in promoted_record["markers"]:
-            promoted_record["markers"].pop(marker_name, None)
-    promoted_record["hierarchy"] = derive_hierarchy(promoted_record["markers"], schema)
-
-    result = {
-        "promotedRecord": promoted_record,
+    result: dict[str, Any] = {
+        # Keep ``promotedRecord`` (singular) for backward compatibility;
+        # callers that want the full set should read ``promotedRecords``.
+        "promotedRecord": promoted_records[0] if promoted_records else None,
+        "promotedRecords": promoted_records,
         "sourceRecords": [{"id": record["id"], "title": record.get("title", "")} for record in source_records],
         "sharedKeywords": keywords,
         "commonMarkers": common,
         "quality": quality,
         "splitSuggestions": suggestions,
+        # Conflicts surfaced to the caller so they can decide whether to
+        # accept the (possibly split) proposals. Empty list when the cohort
+        # is internally consistent.
+        "conflicts": content_conflicts,
     }
 
     if payload.get("writeToGraph"):
         index_result = index_records(
             {
                 "graphPath": graph_path,
-                "records": [promoted_record],
+                "records": promoted_records,
                 "dryRun": bool(payload.get("dryRun")),
             },
             schema,
