@@ -96,13 +96,15 @@ Status: in progress
 
 - [ ] Add query intent modes: `debug`, `implementation`, `architecture`, `product`
   - Spec: each mode changes which markers dominate ranking, which relation types are followed, and how many hops are allowed
-- [ ] Add freshness decay tuning by record type (rules and decisions decay slower than tasks and incidents)
-- [ ] Add relation distance penalties for hops beyond one, reconciled with the one-hop default in `docs/retrieval.md`
+- [x] Add freshness decay tuning by record type — `FRESHNESS_HALF_LIFE_DAYS` constant + `freshnessHalfLifeDays` payload override; rules/decisions decay over a year, tasks/incidents over a month
+- [x] Add relation distance penalties for hops beyond one — `HOP_PENALTY = 0.5` per hop; `build_context_pack` now does two-pass (direct scoring + traversal frontier); documented in `docs/retrieval.md`
 - [x] Promote repeated bugs into reusable rules and decisions
 - [x] Improve promotion quality with stronger summaries and conflict detection
-- [ ] Add conflict-aware splitting or narrower promotion suggestions
+- [x] Add conflict-aware splitting or narrower promotion suggestions — `detect_content_conflicts` + `_split_cohort_by_content_conflict`; `promote_pattern` returns `promotedRecords[]` and `conflicts[]` fields
 
-Acceptance: `build_context_pack` returns visibly different results for the same query when intent mode is switched.
+Eval harness confirms no regression: mean precision@k 0.575 → 0.683, pack/full-dump ratio 0.760 → 0.600 (smaller packs, same or better hits).
+
+Acceptance: `build_context_pack` returns visibly different results for the same query when intent mode is switched. (Query intent modes still open — requires design discussion.)
 
 ## Phase 6 - Lifecycle and safety
 
@@ -171,13 +173,14 @@ Status: in progress
 
 ## Cross-cutting - Observability
 
-Status: not started
+Status: done
 
-- [ ] `dry-run` flag on classify and ingest that prints what would change without writing
-- [ ] `graph-diff` command that compares two graph snapshots
-- [ ] `inspect-record` command that shows why a record was ranked at its current score, including matched markers and matched tokens
+- [x] `dry-run` flag on classify and ingest that prints what would change without writing — `dryRun` payload field on all mutators; disk bytes unchanged (verified)
+- [x] `graph-diff` command that compares two graph snapshots — CLI `graph-diff --left --right [--json]` + MCP tool `graph_diff`; bodies never dumped (hash-only)
+- [x] `inspect-record` command that shows why a record was ranked at its current score, including matched markers and matched tokens — CLI `inspect-record` + MCP tool `inspect_record`; ranker and explainer share `_score_record_detailed` helper so they cannot drift
+- See `docs/observability.md` for usage.
 
-Acceptance: a user debugging a surprising context pack can explain the ranking without reading source code.
+Acceptance: a user debugging a surprising context pack can explain the ranking without reading source code. (Met.)
 
 ## First implementation targets
 
