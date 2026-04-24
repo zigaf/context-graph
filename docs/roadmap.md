@@ -150,6 +150,24 @@ Goal: measure that structured retrieval actually beats loading the full note set
 
 Acceptance: every merge to main includes an eval report that shows no precision regression. (Met locally; CI wiring outstanding.)
 
+## Phase 8 - Proactive curator
+
+Status: in progress
+
+Goal: turn every Claude session into an active note-curating agent. The plugin ships a curator skill that teaches Claude when and how to capture rules, conventions, gotchas, decisions, intersections, tasks, and bug fixes; a light bootstrap creates a Notion skeleton (root + per-dir pages); session priming injects the rule book at session start; hashtag UX surfaces accumulated knowledge by `#tag`.
+
+- [x] `bootstrap_project_skeleton` (README + manifest + dir tree, light) — `scripts/curator_bootstrap.py`
+- [x] Workspace manifest helpers + bootstrap state (`is_bootstrap_needed`, `mark_bootstrap_declined`, `record_bootstrap_result`)
+- [x] Hashtag parser (`#word` → axis-resolved markers payload) — `scripts/hashtag_parser.py`
+- [x] MCP tools: `bootstrap_preview`, `apply_bootstrap_decision`, `parse_hashtags`
+- [x] Curator skill — `skills/context-graph-curator/SKILL.md` with deterministic 7-signal vocabulary
+- [x] Session priming script — `scripts/session_start_prime.py` injects rule book + bootstrap hint
+- [x] `/cg-bootstrap` slash command + CLI `bootstrap` subcommand
+- [x] Documented `scope` values: `convention`, `gotcha`, `intersection`
+- [ ] Live smoke test: install plugin, run a session, verify curator captures a rule end-to-end (user-driven)
+
+Acceptance: in a session against a freshly-bootstrapped workspace, the user says "we always use Idempotency-Key for webhooks" and the curator skill captures it as `type=rule, scope=convention, domain=payments`, indexes it locally, and pushes a Notion page under the conventions sub-page.
+
 ## Cross-cutting - Schema versioning and migrations
 
 Status: not started

@@ -15,6 +15,7 @@ All notable changes to this project are documented here. The format is based on
   `/cg-search --mode <name>`. Eval harness now routes each query
   through its declared intent; baseline updated accordingly.
   See `docs/retrieval.md` and `docs/superpowers/specs/2026-04-24-intent-modes-design.md`.
+- Proactive curator workflow (Phase 8): light project bootstrap (README + manifests + dir tree); curator skill that teaches Claude a deterministic 7-signal vocabulary (Rule / Gotcha / Decision / Module boundary / Convention / Task / Bug fix); hashtag UX (`/cg-search #rule #payments` → marker filter); smart session priming injects rules/decisions into the prime context; `/cg-bootstrap` slash command + CLI subcommand. New MCP tools: `bootstrap_preview`, `apply_bootstrap_decision`, `parse_hashtags`. See `docs/superpowers/specs/2026-04-24-proactive-curator-design.md`.
 
 ### Pending for v0.1.0 release
 
