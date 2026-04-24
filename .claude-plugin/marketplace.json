@@ -1,0 +1,14 @@
+{
+  "name": "context-graph-marketplace",
+  "owner": {
+    "name": "Context Graph Contributors",
+    "url": "https://github.com/zigaf/context-graph"
+  },
+  "plugins": [
+    {
+      "name": "context-graph",
+      "source": ".",
+      "description": "Builds structured context graphs from notes using normalized markers, hierarchical paths, and explicit or inferred relations. Includes proactive curator skill for capturing rules / conventions / gotchas / decisions / intersections during sessions, optional Notion sync, and intent-aware retrieval (debug, implementation, architecture, product modes)."
+    }
+  ]
+}
