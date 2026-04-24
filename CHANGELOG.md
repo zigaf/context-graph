@@ -6,6 +6,16 @@ All notable changes to this project are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+
+- Query intent modes: `debug`, `implementation`, `architecture`, `product`
+  — explicit `intentMode` payload field on `build_context_pack`,
+  `search_graph`, and `inspect_record`; optional `intentOverride`
+  escape hatch for tuning at query time; slash command
+  `/cg-search --mode <name>`. Eval harness now routes each query
+  through its declared intent; baseline updated accordingly.
+  See `docs/retrieval.md` and `docs/superpowers/specs/2026-04-24-intent-modes-design.md`.
+
 ### Pending for v0.1.0 release
 
 - Live validation that the plugin loads in both Claude Code and Codex without duplication (Phase 3.5)

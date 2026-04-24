@@ -133,3 +133,40 @@ Each context pack should contain:
 - promoted rules
 - unresolved risks
 - omitted-but-nearby records count
+
+## Intent modes
+
+`build_context_pack` and `search_graph` accept an optional `intentMode`
+that tunes scoring and traversal for a specific kind of query.
+
+| Mode | Emphasis | Hop cap | Follows |
+|---|---|---|---|
+| `debug` | severity, artifact; current-state records | 2 | `might_affect`, `same_pattern_as` |
+| `implementation` | flow, artifact; done/fixed records | 1 | `same_pattern_as`, `derived_from` |
+| `architecture` | domain, scope; old decisions still rank | 3 | `derived_from`, `related_pattern` |
+| `product` | goal, project, room; forward-looking statuses | 2 | `related_pattern`, `derived_from` |
+
+Full per-mode constants live in `scripts/intent_modes.py::PRESETS`.
+
+### Override
+
+Pass `intentOverride` to tune any preset field at query time:
+
+```json
+{
+  "query": "payment retry",
+  "intentMode": "debug",
+  "intentOverride": { "hopCap": 3 }
+}
+```
+
+Without `intentMode`, `intentOverride` is applied to a neutral baseline
+(all weights 1.0, hopCap 1, all relations allowed).
+
+### How to extend
+
+The four presets cover the common cases. To experiment with a new
+shape without editing source, pass `intentOverride` with the fields you
+want to try and run the eval harness. If a new preset proves itself
+across queries, add it to `PRESETS` in a follow-up PR — the docs and
+the MCP/enum schemas must be updated together.
