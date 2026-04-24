@@ -25,9 +25,10 @@ Steps:
 
 1. If `$ARGUMENTS` is empty, ask the user for a query and stop.
 2. Call the MCP tool `mcp__context-graph__search_graph` with:
-   - `query`: `$ARGUMENTS`
+   - `query`: `$ARGUMENTS` (with any leading `--mode <name>` already stripped per the Intent modes section above)
    - `graphPath`: `./data/graph.json` (default)
    - `limit`: omit unless the user specified one
+   - `intentMode`: include only when the user passed `--mode <name>`; otherwise omit entirely so the call falls back to the no-mode default
 3. Render the resulting context pack in four clearly-labeled sections. Omit any section that has no items rather than printing "none".
 
 Sections, in order:

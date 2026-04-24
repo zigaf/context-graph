@@ -122,6 +122,7 @@ $ python3 scripts/context_graph_cli.py inspect-record \
     --graph .context-graph/graph.json \
     --record r-webhook-crash \
     --query "webhook retry" \
+    --markers '{"type":"bug","severity":"high"}' \
     --mode debug
 ...
   intentMarkerMultiplier:
@@ -131,6 +132,11 @@ $ python3 scripts/context_graph_cli.py inspect-record \
   intentStatusBias: in-progress -> 1.5
   intentFreshnessMultiplier: 1.5
 ```
+
+Marker multipliers only fire on axes that the query actually matched, so
+explicit `--markers` is needed to surface non-zero entries here. Without
+it, `intentMarkerMultiplier:` will be empty even though the type / status
+/ freshness blocks still print.
 
 Use this when a record ranks unexpectedly under a given mode — the
 factor breakdown tells you which preset knob did it.
