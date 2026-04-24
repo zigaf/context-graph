@@ -111,3 +111,71 @@ class BuildContextPackAcceptanceTests(unittest.TestCase):
         from context_graph_core import build_context_pack  # noqa: E402
         with self.assertRaises(ValueError):
             build_context_pack({"query": "x", "records": [], "intentMode": "nope"})
+
+
+class TraversalIntentRoutingTests(unittest.TestCase):
+    def _records(self):
+        # r-seed direct-matches the query; r-affect is reached via
+        # might_affect; r-derived via derived_from. Under debug only
+        # r-affect should appear as a neighbor; under architecture only
+        # r-derived (and traversal continues further).
+        return [
+            {
+                "id": "r-seed", "title": "Webhook retry loop", "content": "Retry loop.",
+                "markers": {"type": "bug", "domain": "payments"},
+                "tokens": ["webhook", "retry"],
+                "relations": {
+                    "explicit": [
+                        {"type": "might_affect", "target": "r-affect"},
+                        {"type": "derived_from", "target": "r-derived"},
+                    ],
+                    "inferred": [],
+                },
+                "updatedAt": "2026-04-01T00:00:00Z",
+            },
+            {
+                "id": "r-affect", "title": "Downstream charge timing",
+                "content": "Charge event.", "markers": {"type": "incident", "domain": "payments"},
+                "tokens": ["charge"],
+                "relations": {"explicit": [], "inferred": []},
+                "updatedAt": "2026-04-01T00:00:00Z",
+            },
+            {
+                "id": "r-derived", "title": "Idempotency architecture",
+                "content": "Decision on idempotency.",
+                "markers": {"type": "architecture", "domain": "payments", "scope": "platform"},
+                "tokens": ["idempotency"],
+                "relations": {"explicit": [], "inferred": []},
+                "updatedAt": "2025-01-01T00:00:00Z",
+            },
+        ]
+
+    def test_debug_follows_might_affect_not_derived_from(self):
+        from context_graph_core import build_context_pack
+        pack = build_context_pack({
+            "query": "webhook retry",
+            "records": self._records(),
+            "limit": 5,
+            "intentMode": "debug",
+        })
+        ids = {item["id"] for item in pack["directMatches"]}
+        self.assertIn("r-seed", ids)
+        self.assertIn("r-affect", ids)
+        self.assertNotIn("r-derived", ids)
+
+    def test_architecture_follows_derived_from_not_might_affect(self):
+        from context_graph_core import build_context_pack
+        # Query matches r-seed directly (webhook/retry tokens). r-affect
+        # and r-derived are reachable only via traversal so the
+        # allowedRelations filter is what decides which one appears in
+        # the pack. (Plan originally used "payments" which direct-hit
+        # all three records via domain=payments, masking the filter.)
+        pack = build_context_pack({
+            "query": "webhook retry",
+            "records": self._records(),
+            "limit": 5,
+            "intentMode": "architecture",
+        })
+        ids = {item["id"] for item in pack["directMatches"]}
+        self.assertIn("r-derived", ids)
+        self.assertNotIn("r-affect", ids)

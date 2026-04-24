@@ -1343,6 +1343,15 @@ def build_context_pack(payload: dict[str, Any], schema: dict[str, Any] | None = 
     # token with the query.
     seed_scores: dict[str, float] = {}
     direct_hit_ids: list[str] = []
+    # Intent can override both the hop cap and the per-hop penalty. When
+    # the payload also passes an explicit max_hops / hop_penalty, the
+    # payload wins (explicit request > implicit preset).
+    if "hopTraversal" not in payload and intent is not None:
+        max_hops = hop_cap_for(intent, default=max_hops)
+    if "hopPenalty" not in payload and intent is not None:
+        override_penalty = hop_penalty_for(intent)
+        if override_penalty is not None:
+            hop_penalty = override_penalty
     effective_penalty = float(hop_penalty) if hop_penalty is not None else HOP_PENALTY
     for record in records:
         rid = record.get("id")
@@ -1375,6 +1384,9 @@ def build_context_pack(payload: dict[str, Any], schema: dict[str, Any] | None = 
                 continue
             seed_score_value = seed_scores.get(seed_id, 0.0)
             for rel in normalize_explicit_relations(seed_record):
+                rel_type = str(rel.get("type") or "")
+                if intent is not None and not is_relation_allowed(rel_type, intent):
+                    continue
                 target_id = rel.get("target")
                 if not target_id or target_id in ranked_by_id:
                     continue
