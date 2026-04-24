@@ -150,3 +150,20 @@ def resolve_intent(
     if override:
         return _merge_override(base, override)
     return base
+
+
+def apply_marker_weight(axis: str, intent: IntentMode | None) -> float:
+    """Per-axis marker weight multiplier. 1.0 when intent is None or the
+    axis is not configured for this intent."""
+    if intent is None:
+        return 1.0
+    return float(intent.marker_weights.get(axis, 1.0))
+
+
+def apply_type_boost(record_type: str | None, intent: IntentMode | None) -> float:
+    """Multiplier keyed by ``markers.type``. 1.0 when intent is None, the
+    type is missing/empty, or the type is not in this intent's boost
+    map."""
+    if intent is None or not record_type:
+        return 1.0
+    return float(intent.type_boost.get(record_type, 1.0))

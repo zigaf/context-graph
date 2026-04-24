@@ -174,5 +174,38 @@ class ResolveIntentTests(unittest.TestCase):
         self.assertEqual(mode.hop_cap, 4)
 
 
+from intent_modes import apply_marker_weight, apply_type_boost  # noqa: E402
+
+
+class MarkerWeightHelperTests(unittest.TestCase):
+    def test_none_intent_returns_one(self):
+        self.assertEqual(apply_marker_weight("severity", None), 1.0)
+
+    def test_unknown_axis_returns_one(self):
+        self.assertEqual(apply_marker_weight("mystery_axis", PRESETS["debug"]), 1.0)
+
+    def test_mapped_axis_returns_weight(self):
+        self.assertEqual(apply_marker_weight("severity", PRESETS["debug"]), 2.5)
+        self.assertEqual(apply_marker_weight("domain", PRESETS["architecture"]), 2.5)
+
+
+class TypeBoostHelperTests(unittest.TestCase):
+    def test_none_intent_returns_one(self):
+        self.assertEqual(apply_type_boost("bug", None), 1.0)
+
+    def test_unmapped_type_returns_one(self):
+        self.assertEqual(apply_type_boost("task", PRESETS["debug"]), 1.0)
+
+    def test_mapped_type_returns_boost(self):
+        self.assertEqual(apply_type_boost("bug", PRESETS["debug"]), 1.5)
+        self.assertEqual(apply_type_boost("architecture", PRESETS["architecture"]), 1.8)
+
+    def test_empty_type_returns_one(self):
+        self.assertEqual(apply_type_boost("", PRESETS["debug"]), 1.0)
+
+    def test_none_type_returns_one(self):
+        self.assertEqual(apply_type_boost(None, PRESETS["debug"]), 1.0)  # type: ignore[arg-type]
+
+
 if __name__ == "__main__":
     unittest.main()
