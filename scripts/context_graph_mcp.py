@@ -14,11 +14,13 @@ from context_graph_core import (
     default_graph_path,
     delete_record,
     filter_pages_by_cursor,
+    graph_diff,
     index_records,
     infer_relations,
     init_workspace,
     ingest_markdown,
     ingest_notion_export,
+    inspect_record,
     learn_schema,
     list_proposals,
     list_pushable_records,
@@ -187,6 +189,20 @@ def handle_save_notion_cursor(arguments: dict[str, Any]) -> dict[str, Any]:
 
 def handle_filter_pages_by_cursor(arguments: dict[str, Any]) -> dict[str, Any]:
     return filter_pages_by_cursor(arguments)
+
+
+def handle_graph_diff(arguments: dict[str, Any]) -> dict[str, Any]:
+    if not arguments.get("leftPath") and not arguments.get("left"):
+        raise ValueError("Missing required field: leftPath (or inline 'left')")
+    if not arguments.get("rightPath") and not arguments.get("right"):
+        raise ValueError("Missing required field: rightPath (or inline 'right')")
+    return graph_diff(arguments)
+
+
+def handle_inspect_record(arguments: dict[str, Any]) -> dict[str, Any]:
+    if not arguments.get("recordId"):
+        raise ValueError("Missing required field: recordId")
+    return inspect_record(arguments)
 
 
 def handle_retrieval_scoring(arguments: dict[str, Any]) -> dict[str, Any]:
@@ -859,6 +875,86 @@ TOOLS: list[ToolSpec] = [
             "required": ["recordId", "archived", "graphPath", "updatedAt"],
         },
         handler=handle_unarchive_record,
+    ),
+    ToolSpec(
+        name="graph_diff",
+        title="Diff Two Graph Snapshots",
+        description="Compare two graph.json files (or inline graphs) and return records/edges added, removed, or modified, plus a summary count.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "leftPath": {"type": "string"},
+                "rightPath": {"type": "string"},
+                "left": {"type": "object"},
+                "right": {"type": "object"},
+            },
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "recordsAdded": {"type": "array"},
+                "recordsRemoved": {"type": "array"},
+                "recordsModified": {"type": "array"},
+                "edgesAdded": {"type": "array"},
+                "edgesRemoved": {"type": "array"},
+                "summary": {"type": "object"},
+            },
+            "required": [
+                "recordsAdded",
+                "recordsRemoved",
+                "recordsModified",
+                "edgesAdded",
+                "edgesRemoved",
+                "summary",
+            ],
+        },
+        handler=handle_graph_diff,
+    ),
+    ToolSpec(
+        name="inspect_record",
+        title="Inspect Record Score",
+        description="Explain why a record would be ranked at its current score for a query, showing matched markers, matched tokens, per-factor contributions, and the record's rank in top-k.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "graphPath": {"type": "string"},
+                "workspaceRoot": {"type": "string"},
+                "recordId": {"type": "string"},
+                "query": {"type": "string"},
+                "markers": {"type": "object"},
+                "limit": {"type": "number"},
+                "includeArchived": {"type": "boolean"},
+            },
+            "required": ["recordId"],
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "id": {"type": "string"},
+                "title": {"type": "string"},
+                "markers": {"type": "object"},
+                "matchedMarkers": {"type": "array"},
+                "matchedTokens": {"type": "array"},
+                "factors": {"type": "object"},
+                "score": {"type": "number"},
+                "rank": {"type": ["number", "null"]},
+                "inTopK": {"type": "boolean"},
+                "outgoingEdges": {"type": "array"},
+                "incomingEdges": {"type": "array"},
+            },
+            "required": [
+                "id",
+                "title",
+                "markers",
+                "matchedMarkers",
+                "matchedTokens",
+                "factors",
+                "score",
+            ],
+        },
+        handler=handle_inspect_record,
     ),
     ToolSpec(
         name="eval_retrieval",
