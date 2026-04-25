@@ -2820,28 +2820,67 @@ def list_pushable_records(
     return out
 
 
-def load_push_state(workspace_root: Path | str | None = None) -> dict[str, str]:
-    """Read ``.context-graph/notion_push.json`` as ``{record_id: page_id}``.
+def load_push_state(workspace_root: Path | str | None = None) -> dict[str, Any]:
+    """Read ``.context-graph/notion_push.json`` as the auto-push state.
 
-    Missing file returns ``{}``. Malformed JSON is treated as empty to keep
-    the push path resilient; callers needing strict validation should read
-    the file directly via ``push_state_path``.
+    The returned shape is::
+
+        {
+            "pending": [recordId, ...],
+            "records": {
+                recordId: {
+                    "notionPageId": str,
+                    "lastPushedRevision": int | None,
+                    "lastPushedAt": str | None,
+                },
+                ...,
+            },
+        }
+
+    Legacy ``{record_id: page_id}`` files are migrated on read into the
+    new shape with ``lastPushedRevision = None`` and ``lastPushedAt = None``.
+    Missing or malformed files return ``{"pending": [], "records": {}}``.
     """
     start = Path(str(workspace_root)) if workspace_root else None
     try:
         path = push_state_path(start)
     except WorkspaceNotInitializedError:
-        return {}
+        return {"pending": [], "records": {}}
     if not path.exists():
-        return {}
+        return {"pending": [], "records": {}}
     try:
         with path.open("r", encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
-        return {}
+        return {"pending": [], "records": {}}
     if not isinstance(data, dict):
-        return {}
-    return {str(key): str(value) for key, value in data.items() if value is not None}
+        return {"pending": [], "records": {}}
+    if "records" in data or "pending" in data:
+        records = data.get("records") or {}
+        pending = data.get("pending") or []
+        normalised: dict[str, dict[str, Any]] = {}
+        for key, value in records.items():
+            if isinstance(value, dict) and value.get("notionPageId"):
+                normalised[str(key)] = {
+                    "notionPageId": str(value["notionPageId"]),
+                    "lastPushedRevision": value.get("lastPushedRevision"),
+                    "lastPushedAt": value.get("lastPushedAt"),
+                }
+        return {
+            "pending": [str(item) for item in pending if item],
+            "records": normalised,
+        }
+    # Legacy: flat {recordId: pageId} mapping.
+    legacy: dict[str, dict[str, Any]] = {}
+    for key, value in data.items():
+        if value is None:
+            continue
+        legacy[str(key)] = {
+            "notionPageId": str(value),
+            "lastPushedRevision": None,
+            "lastPushedAt": None,
+        }
+    return {"pending": [], "records": legacy}
 
 
 def save_push_state(
