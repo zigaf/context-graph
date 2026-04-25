@@ -13,6 +13,8 @@ from context_graph_core import (
     classify_record,
     default_graph_path,
     delete_record,
+    dequeue_push,
+    enqueue_push,
     filter_pages_by_cursor,
     graph_diff,
     index_records,
@@ -22,6 +24,7 @@ from context_graph_core import (
     ingest_notion_export,
     inspect_record,
     learn_schema,
+    list_pending_pushes,
     list_proposals,
     list_pushable_records,
     load_graph,
@@ -312,6 +315,29 @@ def handle_apply_notion_push_result(arguments: dict[str, Any]) -> dict[str, Any]
         "notionPageId": str(notion_page_id),
         "pushState": new_state,
     }
+
+
+def handle_enqueue_push(arguments: dict[str, Any]) -> dict[str, Any]:
+    record_id = arguments.get("recordId")
+    if not record_id:
+        raise ValueError("Missing required field: recordId")
+    workspace = _workspace_from_args(arguments)
+    pending = enqueue_push(str(record_id), workspace_root=workspace)
+    return {"pending": pending}
+
+
+def handle_dequeue_push(arguments: dict[str, Any]) -> dict[str, Any]:
+    record_id = arguments.get("recordId")
+    if not record_id:
+        raise ValueError("Missing required field: recordId")
+    workspace = _workspace_from_args(arguments)
+    pending = dequeue_push(str(record_id), workspace_root=workspace)
+    return {"pending": pending}
+
+
+def handle_list_pending_pushes(arguments: dict[str, Any]) -> dict[str, Any]:
+    workspace = _workspace_from_args(arguments)
+    return {"pending": list_pending_pushes(workspace_root=workspace)}
 
 
 def _resolve_notion_root_page_id_from_workspace(workspace) -> str | None:
@@ -964,6 +990,70 @@ TOOLS: list[ToolSpec] = [
             "required": ["recordId", "notionPageId", "pushState"],
         },
         handler=handle_apply_notion_push_result,
+    ),
+    ToolSpec(
+        name="enqueue_push",
+        title="Enqueue Notion Push",
+        description="Append a record id to the local Notion auto-push queue (deduped).",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "recordId": {"type": "string"},
+                "workspaceRoot": {"type": "string"},
+            },
+            "required": ["recordId"],
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "pending": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["pending"],
+        },
+        handler=handle_enqueue_push,
+    ),
+    ToolSpec(
+        name="dequeue_push",
+        title="Dequeue Notion Push",
+        description="Remove a record id from the local Notion auto-push queue.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "recordId": {"type": "string"},
+                "workspaceRoot": {"type": "string"},
+            },
+            "required": ["recordId"],
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "pending": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["pending"],
+        },
+        handler=handle_dequeue_push,
+    ),
+    ToolSpec(
+        name="list_pending_pushes",
+        title="List Pending Notion Pushes",
+        description="Return the record ids waiting in the local Notion auto-push queue.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workspaceRoot": {"type": "string"},
+            },
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "pending": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["pending"],
+        },
+        handler=handle_list_pending_pushes,
     ),
     ToolSpec(
         name="record_to_notion_payload",
