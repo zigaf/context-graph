@@ -1,216 +1,232 @@
 # Context Graph
 
-Context Graph is a plugin scaffold for turning unstructured notes into a compact retrieval system.
+Plugin for Claude Code (and Codex) that turns scattered project notes — Notion pages, markdown files, in-session captures — into a structured retrieval system.
 
-It is built around four ideas:
+Instead of free-form hashtags, every note is normalized into:
 
-- normalized markers instead of free-form hashtags
-- explicit and inferred relations between records
-- hierarchy paths that keep notes navigable
-- compact context packs assembled per request
+- **markers** — `type`, `domain`, `flow`, `goal`, `status` from a controlled vocabulary
+- **hierarchy** — a stable path like `payments > deposit > endpoint`
+- **explicit relations** — confirmed links such as `fixes`, `affects`, `depends_on`
+- **inferred relations** — probable links with a confidence score
 
-## Core model
+You ask for context, the plugin returns a compact pack ranked for the task — no scrolling through 200 Notion pages.
 
-Each record should eventually contain:
+---
 
-- markers: canonical fields like `type`, `domain`, `flow`, `goal`, `status`
-- hierarchy: a stable path such as `project > domain > flow > artifact`
-- explicit relations: confirmed links like `fixes`, `affects`, `depends_on`
-- inferred relations: probable links with a confidence score
+## Install
 
-## Initial repository layout
-
-- `.codex-plugin/plugin.json` - plugin manifest
-- `.mcp.json` - MCP server registry placeholder
-- `.app.json` - app registry placeholder
-- `hooks.json` - hook registry placeholder
-- `docs/schema.json` - initial marker and relation schema
-- `docs/retrieval.md` - retrieval policy for building context packs
-
-## Workspace layout
-
-Run `init-workspace` or `/cg-init` once per project. This creates a local
-workspace directory:
+In Claude Code:
 
 ```text
-.context-graph/
-  workspace.json
-  graph.json
-  schema.learned.json
-  schema.feedback.json
-  idf_stats.json
-  notion_cursor.json
-  markdown_cursor.json
+/plugin marketplace add zigaf/context-graph
+/plugin install context-graph@context-graph-marketplace
 ```
 
-`workspace.json` is the opt-in marker. Runtime state files are added to
-`.gitignore` by default. The shipped schema still lives in `docs/schema.json`;
-workspace-specific learned values and marker importance live in
-`.context-graph/schema.learned.json`.
+Restart the session so the MCP server and slash commands load. Verify with `/cg-start` — if the command is visible, the plugin is live.
 
-## First setup
+The Notion side uses the official Notion MCP OAuth connection. **No API key is stored in the plugin.** Connect Notion via your usual session OAuth before the first sync.
 
-For a new project, start with:
+---
 
-```bash
+## Five-minute first run
+
+From any project directory:
+
+```text
 /cg-start
 ```
 
-The command creates the local workspace if needed, asks whether your first
-source is Notion or a local markdown folder, runs the first matching sync
-batch, and finishes with a suggested `/cg-search` query. The lower-level
-commands (`/cg-init`, `/cg-sync-notion`, `/cg-index`) remain available for
-manual workflows.
+The wizard:
 
-## Implemented MVP commands
+1. Creates a workspace at `<cwd>/.context-graph/`
+2. Asks whether the first source is **Notion** or **local markdown**
+3. Pulls existing notes from your chosen source
+4. Indexes them locally
+5. Suggests a `/cg-search` query so you can verify
 
-The current scaffold includes a local CLI runtime in `scripts/context_graph_cli.py`.
+That's the whole onboarding. The graph is now usable in this directory.
 
-Available commands:
+---
 
-1. `classify-record` - normalize markers, infer missing markers, and build hierarchy paths
-2. `init-workspace` - create `.context-graph/workspace.json` and local state ignores
-3. `link-record` - create inferred relations between one source record and candidate records
-4. `build-context-pack` - rank records for a user request and return a compact retrieval payload
-5. `index-records` - classify records, upsert them into local graph storage, rebuild edges, refresh IDF stats, and run the light learner
-6. `search-graph` - build a context pack from the persisted graph index, using learned marker importance when available
-7. `promote-pattern` - derive a reusable rule or decision record from related source records
-8. `ingest-markdown` - scan markdown files, extract records from front matter plus headings, and optionally index them
-9. `ingest-notion-export` - scan Notion markdown exports, preserve page ids from filenames, and resolve local links between exported pages
-10. `sync-notion` - headless Notion API fallback for cron/CI; live sessions should prefer `/cg-sync-notion` through the official Notion MCP OAuth connection
-11. `learn-schema` - run a full workspace learning pass and write proposal queues plus marker importance
-12. `list-proposals` - list pending, accepted, and rejected schema proposals
-13. `apply-proposal-decision` - accept, reject, or skip one schema proposal
-14. `delete-record` - remove a record from the graph and rebuild affected edges
-15. `archive-record` - hide a record from context packs and graph search without touching its edges
-16. `unarchive-record` - clear the archived flag so a record becomes visible again
+## Notion vs local markdown
 
-All commands read JSON from `stdin` and write JSON to `stdout`.
+|                | Notion                                              | Local markdown                            |
+| -------------- | --------------------------------------------------- | ----------------------------------------- |
+| Source         | pages in your Notion workspace                      | `.md` files under a folder                |
+| Auth           | official Notion MCP OAuth (no key in plugin config) | none — reads files directly               |
+| Use when       | team-shared knowledge already in Notion             | personal notes, scratch repos, MD exports |
+| Updates        | per-page `last_edited_time` cursor                  | per-file freshness cursor                 |
 
-By default, commands resolve the nearest `.context-graph/workspace.json` by
-walking up from the current directory. Set `CONTEXT_GRAPH_LEGACY_PLUGIN_DATA=1`
-to use the plugin-local `data/` directory for legacy tests or scripts. You can
-also override the graph with `graphPath` in the input payload.
+Both produce the same local graph. You can run them in the same workspace.
 
-## MCP server
+---
 
-The plugin now also includes a stdio MCP server in `scripts/context_graph_mcp.py`.
+## Pull vs push — important
 
-Implemented protocol surface:
+Most commands are **read-only**: they pull notes from somewhere into the local graph. Only two paths ever write to Notion, and both are explicit:
 
-- `initialize`
-- `ping`
-- `tools/list`
-- `tools/call`
-- `logging/setLevel` as a no-op acknowledgement
-- `notifications/initialized`
+| Path                           | Direction              | When                                                                                                      |
+| ------------------------------ | ---------------------- | --------------------------------------------------------------------------------------------------------- |
+| `/cg-start`                    | pull (Notion or MD)    | First-time onboarding wizard. **Never writes to Notion.**                                                 |
+| `/cg-sync-notion <scope>`      | pull                   | Regular incremental Notion sync.                                                                          |
+| `/cg-index <path>`             | pull                   | Ingest / re-ingest local markdown.                                                                        |
+| `/cg-bootstrap`                | **write Notion**       | Creates a root page + per-top-level-dir skeleton in Notion, once. Skip if your project already has pages. |
+| `/cg-sync-notion <scope> push` | **write Notion** (opt) | Pushes promoted rules / decisions back to Notion. Requires explicit `push` argument and a confirmation.   |
 
-The server is registered in [.mcp.json](/Users/maksnalyvaiko/context-graph/.mcp.json) and exposes the following tools:
+**Day-to-day, you write notes in Notion the normal way** — a rule, a gotcha, a decision, a bug postmortem. Then `/cg-sync-notion <scope>` pulls them into the graph and `/cg-search` surfaces them when relevant.
 
-- `classify_record`
-- `init_workspace`
-- `link_record`
-- `build_context_pack`
-- `index_records`
-- `search_graph`
-- `promote_pattern`
-- `learn_schema`
-- `list_proposals`
-- `apply_proposal_decision`
-- `ingest_markdown`
-- `ingest_notion_export`
-- `sync_notion`
-- `delete_record`
-- `archive_record`
-- `unarchive_record`
+The plugin does **not** auto-summarize your project into Notion pages. `/cg-bootstrap` only creates an empty skeleton you fill yourself.
 
-Example:
+---
+
+## Slash commands
+
+| Command              | Purpose                                                                            |
+| -------------------- | ---------------------------------------------------------------------------------- |
+| `/cg-start`          | Onboarding wizard — init workspace + first sync (Notion or markdown).              |
+| `/cg-init`           | Create `.context-graph/workspace.json` only, no sync.                              |
+| `/cg-bootstrap`      | Create the Notion skeleton (root page + per-dir pages) for this workspace.        |
+| `/cg-sync-notion`    | Pull Notion pages into the graph (default), or `push` promoted records back.      |
+| `/cg-index`          | Ingest a markdown folder into the graph.                                           |
+| `/cg-search`         | Build a context pack for a task or query. Supports `#hashtag` marker filters.     |
+| `/cg-classify`       | Normalize markers and hierarchy for a single note.                                 |
+| `/cg-schema-learn`   | Run the schema learner — propose new marker values + update marker importance.    |
+| `/cg-schema-review`  | Triage pending schema proposals (accept / reject / skip).                          |
+
+Schema review is intentionally user-driven. Proposals are never auto-accepted.
+
+---
+
+## Workspace layout
+
+After `/cg-init` (or `/cg-start`), the project gets:
+
+```text
+.context-graph/
+  workspace.json          # opt-in marker, holds workspace id and Notion root mapping
+  graph.json              # indexed records and edges (full bodies — keep out of git)
+  schema.learned.json     # workspace-specific marker importance learned from your notes
+  schema.feedback.json    # accept/reject decisions on schema proposals
+  idf_stats.json          # retrieval ranking stats
+  notion_cursor.json      # per-page last-seen timestamp for incremental Notion sync
+  markdown_cursor.json    # per-file freshness state for incremental markdown sync
+  notion_push.json        # local→Notion mapping for push idempotency
+```
+
+`workspace.json` is the **only** file checked in by default. Runtime state files are added to `.gitignore`. The shipped vocabulary lives in [docs/schema.json](docs/schema.json); workspace-specific learned values go to `.context-graph/schema.learned.json`.
+
+---
+
+## Record model
+
+Every record carries:
+
+- `id` — `notion:<page-id>` or `markdown:<file-hash>`
+- `title`, `content`
+- `markers` — `{type, domain, flow, goal, status, severity, scope, ...}` from the schema
+- `hierarchy` — derived from markers, e.g. `payments > deposit > endpoint`
+- `source` — `system`, `url`, `notionPageId`, `last_edited_time`, `parent` breadcrumb
+- `relations` — explicit + inferred edges to other records
+
+Full schema and adapter contract: [docs/record-model.md](docs/record-model.md), [docs/adapter-guide.md](docs/adapter-guide.md).
+
+---
+
+## Retrieval intent modes
+
+`/cg-search` and `build_context_pack` accept an `intentMode` to bias ranking:
+
+- `debug` — favour bugs, incidents, debug logs
+- `implementation` — favour rules, conventions, related code paths
+- `architecture` — favour decisions, architecture docs, module maps
+- `product` — favour specs, user-facing changes
+
+Override at query time with `--mode <name>` or `intentMode` in the payload. See [docs/retrieval.md](docs/retrieval.md).
+
+---
+
+## Curator workflow
+
+The plugin ships a proactive curator skill (`context-graph-curator`) that watches sessions for high-signal artefacts — **rules, gotchas, decisions, module boundaries, conventions, tasks, bug fixes** — and proposes them as records. Hashtag UX in `/cg-search #rule #payments` filters the graph by markers without writing SQL.
+
+See `docs/superpowers/specs/2026-04-24-proactive-curator-design.md` for the design.
+
+---
+
+## Promotion quality
+
+`promote-pattern` derives a reusable rule from a cluster of related records. Output includes a `quality` block with:
+
+- `score` and `recommendation` (`safe`, `review`, `split`)
+- per-marker conflict counts
+- `splitSuggestions` grouping source records by high-signal conflicts (`type`, `goal`, `artifact`)
+
+Use this to decide whether a promoted rule ships as-is or splits into narrower records.
+
+---
+
+## CLI / MCP server
+
+The plugin ships:
+
+- **CLI** — `scripts/context_graph_cli.py`. JSON in / JSON out. Resolves the nearest `.context-graph/workspace.json` by walking up from cwd.
+- **MCP server** — `scripts/context_graph_mcp.py`, registered in [.mcp.json](.mcp.json), exposes the CLI as MCP tools so Claude can call them directly.
+
+Available CLI subcommands:
+
+```text
+classify-record       index-records         delete-record
+init-workspace        search-graph          archive-record
+link-record           promote-pattern       unarchive-record
+build-context-pack    ingest-markdown
+                      ingest-notion-export
+                      sync-notion          # headless fallback for cron/CI
+                      learn-schema
+                      list-proposals
+                      apply-proposal-decision
+                      push-notion          # headless push fallback (--dry-run by default)
+                      eval                 # retrieval regression check
+```
+
+In live sessions prefer the slash commands or MCP tools. The bare CLI is for cron, CI, and headless automation.
+
+Examples:
 
 ```bash
 echo '{"record":{"title":"Webhook race in deposit flow","content":"Duplicate payment creation after callback retry"}}' \
   | python3 scripts/context_graph_cli.py classify-record
-```
 
-```bash
 echo '{}' | python3 scripts/context_graph_cli.py init-workspace
-```
 
-```bash
-echo '{"records":[{"id":"r1","title":"Webhook race in deposit flow","content":"Duplicate payment creation after callback retry","markers":{"type":"bug","domain":"payments","goal":"fix-bug","status":"in-progress"}}],"workspaceRoot":"."}' \
-  | python3 scripts/context_graph_cli.py index-records
-```
-
-```bash
-echo '{"rootPath":"/tmp/context-graph-md","graphPath":"/tmp/context-graph-md/graph.json"}' \
+echo '{"rootPath":"/tmp/notes","graphPath":"/tmp/notes/graph.json"}' \
   | python3 scripts/context_graph_cli.py ingest-markdown
 ```
 
-```bash
-echo '{"graphPath":"/tmp/context-graph-md/graph.json","recordIds":["src:markdown-context-graph-md-bug-md","src:markdown-context-graph-md-rule-md"],"writeToGraph":true}' \
-  | python3 scripts/context_graph_cli.py promote-pattern
-```
+The Python `sync-notion` and `push-notion` commands are the headless fallback. They take `NOTION_TOKEN` from env and are only intended for cron/CI — live sessions go through the official Notion MCP via `/cg-sync-notion`.
 
-```bash
-echo '{"rootPath":"/tmp/notion-export-sample","graphPath":"/tmp/notion-export-sample/graph.json"}' \
-  | python3 scripts/context_graph_cli.py ingest-notion-export
-```
-
-```bash
-echo '{"workspaceRoot":"."}' | python3 scripts/context_graph_cli.py learn-schema
-```
-
-In live Claude Code/Codex sessions, `/cg-sync-notion` uses the official Notion
-MCP OAuth connection and does not ask for API keys. The Python `sync-notion`
-command remains a headless fallback for cron/CI environments only.
-
-## Promotion quality
-
-`promote-pattern` now emits a `quality` block with:
-
-- `score`
-- `recommendation` (`safe`, `review`, `split`)
-- marker conflict counts
-- per-marker conflict details
-
-This helps decide whether a promoted rule should be accepted as-is or split into narrower records.
-
-It also emits `splitSuggestions`, which groups source records by high-signal conflicting markers such as `type`, `goal`, or `artifact`.
+---
 
 ## Tests
 
-The repository now includes fixture-based `unittest` coverage in [tests/test_core.py](/Users/maksnalyvaiko/context-graph/tests/test_core.py).
-
-Run it with:
-
 ```bash
-cd /Users/maksnalyvaiko/context-graph && PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s tests -p 'test_*.py'
+cd /path/to/context-graph
+PYTHONDONTWRITEBYTECODE=1 python3 -B -m unittest discover -s tests -p 'test_*.py'
 ```
 
-## Slash commands
+Fixture-based coverage in [tests/](tests/).
 
-The plugin includes slash-command instructions for:
+The retrieval eval harness (`scripts/context_graph_cli.py eval`) exits non-zero on regression against the committed baseline.
 
-- `/cg-start`
-- `/cg-init`
-- `/cg-index`
-- `/cg-search`
-- `/cg-classify`
-- `/cg-sync-notion`
-- `/cg-schema-learn`
-- `/cg-schema-review`
-
-Schema review is intentionally user-driven: proposals are never auto-accepted
-without an explicit accept/reject/skip decision.
+---
 
 ## Security and data
 
-See [docs/security.md](docs/security.md) for headless Notion token handling.
-Live session sync should use the official Notion MCP OAuth connection instead.
+- [docs/security.md](docs/security.md) — headless Notion token handling. Live sessions use the Notion MCP OAuth; no API keys are stored.
+- [docs/data-retention.md](docs/data-retention.md) — what `data/` and `.context-graph/` contain (`graph.json` carries full record bodies; `notion_cursor.json` is just a timestamp).
+- [docs/lifecycle.md](docs/lifecycle.md) — record create / update / archive / delete, edge TTL, the optional redaction hook applied before a context pack is returned.
 
-See [docs/data-retention.md](docs/data-retention.md) for what lives under `data/` (`graph.json` carries full record bodies; `notion_cursor.json` is just a timestamp) and the recommended hygiene for keeping the graph out of version control.
+---
 
-See [docs/lifecycle.md](docs/lifecycle.md) for the user-facing view of record create, update, archive, delete, the TTL on inferred edges, and the optional redaction hook applied before a context pack is returned.
+## License
 
-## Publishing note
-
-The manifest uses `example.com` placeholders for external URLs. Replace them before distribution.
+MIT — see [LICENSE](LICENSE).

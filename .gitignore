@@ -4,3 +4,12 @@ __pycache__/
 data/graph.json
 .pytest_cache/
 .claude/
+
+# Context Graph (local workspace state)
+.context-graph/graph.json
+.context-graph/schema.learned.json
+.context-graph/schema.feedback.json
+.context-graph/idf_stats.json
+.context-graph/notion_cursor.json
+.context-graph/notion_push.json
+.context-graph/markdown_cursor.json
