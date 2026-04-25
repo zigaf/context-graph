@@ -26,16 +26,22 @@ details unless an error requires them.
    - Otherwise use the current working directory as the workspace root.
 2. Walk upward from the current directory looking for
    `.context-graph/workspace.json`.
-3. If a workspace exists, keep using it and continue to source selection.
+3. If a workspace exists, set `workspaceRoot` to the directory containing
+   `.context-graph/workspace.json`, keep using it, and continue to source
+   selection.
 4. If no workspace exists, ask:
    `Create a Context Graph workspace for <cwd>? [y/N/<other path>]`
    - `y`: call `mcp__context-graph__init_workspace` with
-     `{"rootPath": "<cwd>"}`.
+     `{"rootPath": "<cwd>"}` and set `workspaceRoot` to `<cwd>`.
    - `<other path>`: resolve it to an absolute path and call
-     `mcp__context-graph__init_workspace` with that root.
+     `mcp__context-graph__init_workspace` with that root. Set
+     `workspaceRoot` to that absolute path.
    - `N`: stop and say `Setup canceled.`
 5. If `init_workspace` reports that the workspace already exists, continue
-   with that existing workspace instead of treating it as fatal.
+   with that existing workspace instead of treating it as fatal and set
+   `workspaceRoot` to the existing workspace root.
+6. Use `workspaceRoot` for later Context Graph tool calls instead of relying
+   on the current working directory.
 
 ## Step 2: Source Selection
 
@@ -66,7 +72,8 @@ Use this path when the user chose Notion.
      `Which Notion page, database, or keyword should I sync first?`
    - If the user gives an empty scope, stop and ask them to rerun `/cg-start notion <scope>`.
 2. Load the stored page freshness state by calling
-   `mcp__context-graph__load_notion_cursor` with `{}`.
+   `mcp__context-graph__load_notion_cursor` with
+   `{"workspaceRoot": "<workspaceRoot>"}`.
 3. Search Notion with the available official Notion search tool:
    - Query: the user's scope.
    - Query type: internal.
@@ -98,13 +105,25 @@ Use this path when the user chose Notion.
       - `source.metadata.notionPageId`: raw page id
       - `source.metadata.last_edited_time`: search timestamp
       - `source.metadata.parent`: ancestor titles joined by ` > ` when available
-    - Call `mcp__context-graph__classify_record` with `{"record": <draft>}`.
-    - If the classifier asks for pending arbitration, choose marker values from
-      the allowed values using the current session context. Do not invent
-      values.
-11. Call `mcp__context-graph__index_records` once with all finalized records.
+    - Call `mcp__context-graph__classify_record` with
+      `{"record": <draft>, "workspaceRoot": "<workspaceRoot>"}`.
+    - If `source.metadata.classifierNotes.arbiter == "pending-arbitration"`,
+      resolve it in this live session using the current agent, not an external
+      API.
+    - Read `arbitrationRequest`: use `record`, `candidates`, `allowedValues`,
+      and `requiredFields`.
+    - For each pending field, pick one value from that field's `allowedValues`.
+      Return null only when nothing fits and the field is not required.
+    - Override `record.markers.<field>` with the chosen values.
+    - Set `record.source.metadata.classifierNotes.arbiter` to `llm-session`
+      and fill `reasoning` with one sentence.
+    - If the classifier was deterministic or fallback, keep the returned record
+      unchanged.
+11. Call `mcp__context-graph__index_records` once with all finalized records:
+    `{"records": <finalized records>, "workspaceRoot": "<workspaceRoot>"}`.
 12. Advance the loaded cursor for each successfully indexed fresh page and call
-    `mcp__context-graph__save_notion_cursor` with `{"cursor": <advanced cursor>}`.
+    `mcp__context-graph__save_notion_cursor` with
+    `{"cursor": <advanced cursor>, "workspaceRoot": "<workspaceRoot>"}`.
 13. Report:
     `Context Graph is ready. Source: Notion. <N> pages pulled, <M> pages skipped, <R> records indexed. Try: /cg-search <scope>`
 
@@ -122,7 +141,8 @@ Use this path when the user chose Local markdown.
    {
      "rootPath": "<absolute notes path>",
      "recursive": true,
-     "index": true
+     "index": true,
+     "graphPath": "<workspaceRoot>/.context-graph/graph.json"
    }
    ```
 4. If `fileCount` is zero, report:
