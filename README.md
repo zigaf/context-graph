@@ -47,6 +47,19 @@ workspace directory:
 workspace-specific learned values and marker importance live in
 `.context-graph/schema.learned.json`.
 
+## First setup
+
+For a new project, start with:
+
+```bash
+/cg-start
+```
+
+The command creates the local workspace if needed, asks whether your first
+source is Notion or a local markdown folder, runs the first sync, and finishes
+with a suggested `/cg-search` query. The lower-level commands (`/cg-init`,
+`/cg-sync-notion`, `/cg-index`) remain available for manual workflows.
+
 ## Implemented MVP commands
 
 The current scaffold includes a local CLI runtime in `scripts/context_graph_cli.py`.
