@@ -12,6 +12,8 @@ from context_graph_core import (
     build_context_pack,
     classify_record,
     delete_record,
+    dequeue_push,
+    enqueue_push,
     format_graph_diff,
     format_inspect_record,
     graph_diff,
@@ -22,6 +24,7 @@ from context_graph_core import (
     ingest_notion_export,
     inspect_record,
     learn_schema,
+    list_pending_pushes,
     list_proposals,
     promote_pattern,
     search_graph,
@@ -185,6 +188,29 @@ def _run_bootstrap(argv: list[str]) -> int:
     return 0
 
 
+def _handle_enqueue_push(payload: dict) -> dict:
+    record_id = payload.get("recordId") or payload.get("record_id")
+    if not record_id:
+        raise SystemExit("enqueue-push requires recordId")
+    workspace = payload.get("workspaceRoot")
+    pending = enqueue_push(str(record_id), workspace_root=workspace)
+    return {"pending": pending}
+
+
+def _handle_dequeue_push(payload: dict) -> dict:
+    record_id = payload.get("recordId") or payload.get("record_id")
+    if not record_id:
+        raise SystemExit("dequeue-push requires recordId")
+    workspace = payload.get("workspaceRoot")
+    pending = dequeue_push(str(record_id), workspace_root=workspace)
+    return {"pending": pending}
+
+
+def _handle_list_pending_pushes(payload: dict) -> dict:
+    workspace = payload.get("workspaceRoot")
+    return {"pending": list_pending_pushes(workspace_root=workspace)}
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     argv_list = list(sys.argv[1:] if argv is None else argv)
 
@@ -234,6 +260,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             "unarchive-record",
             "graph-diff",
             "inspect-record",
+            "enqueue-push",
+            "dequeue-push",
+            "list-pending-pushes",
             "eval",
         ],
         help="Command to execute",
@@ -279,6 +308,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = archive_record(payload)
     elif args.command == "unarchive-record":
         result = unarchive_record(payload)
+    elif args.command == "enqueue-push":
+        result = _handle_enqueue_push(payload)
+    elif args.command == "dequeue-push":
+        result = _handle_dequeue_push(payload)
+    elif args.command == "list-pending-pushes":
+        result = _handle_list_pending_pushes(payload)
     else:
         result = build_context_pack(payload)
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -121,6 +122,31 @@ class QueueOpsTests(unittest.TestCase):
             ws = _make_workspace(tmp)
             dequeue_push("notion:none", workspace_root=ws)  # must not raise
             self.assertEqual(list_pending_pushes(workspace_root=ws), [])
+
+
+class CliQueueSubcommandTests(unittest.TestCase):
+    SCRIPT = ROOT / "scripts" / "context_graph_cli.py"
+
+    def _run(self, payload: dict, command: str, ws: Path) -> dict:
+        proc = subprocess.run(
+            ["python3", str(self.SCRIPT), command],
+            input=json.dumps(payload),
+            capture_output=True,
+            text=True,
+            cwd=str(ws),
+            check=False,
+        )
+        if proc.returncode != 0:
+            self.fail(f"{command} failed: {proc.stderr}")
+        return json.loads(proc.stdout)
+
+    def test_enqueue_then_list(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(tmp)
+            self._run({"recordId": "notion:abc"}, "enqueue-push", ws)
+            self._run({"recordId": "notion:def"}, "enqueue-push", ws)
+            result = self._run({}, "list-pending-pushes", ws)
+            self.assertEqual(result["pending"], ["notion:abc", "notion:def"])
 
 
 if __name__ == "__main__":
