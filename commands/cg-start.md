@@ -136,7 +136,7 @@ Use this path when the user chose Skip.
 
 Report:
 
-`Context Graph workspace is ready. First sync skipped. Later, run /cg-start notion <scope> or /cg-start markdown <path>.`
+`Context Graph is ready. First sync skipped. Later, run /cg-start notion <scope> or /cg-start markdown <path>.`
 
 ## Completion Summary Requirements
 
