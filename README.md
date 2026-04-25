@@ -40,6 +40,7 @@ workspace directory:
   schema.feedback.json
   idf_stats.json
   notion_cursor.json
+  markdown_cursor.json
 ```
 
 `workspace.json` is the opt-in marker. Runtime state files are added to

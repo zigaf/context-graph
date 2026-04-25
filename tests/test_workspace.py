@@ -115,15 +115,17 @@ class InitWorkspaceTests(unittest.TestCase):
             self.assertIsNotNone(manifest["id"])
             self.assertIn("createdAt", manifest)
 
-    def test_refuses_if_already_initialized(self):
+    def test_returns_already_exists_marker_on_second_init(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
-            init_workspace({"rootPath": str(root)})
+            first = init_workspace({"rootPath": str(root)})
+            second = init_workspace({"rootPath": str(root)})
 
-            with self.assertRaises(ValueError) as ctx:
-                init_workspace({"rootPath": str(root)})
-
-            self.assertIn("already initialized", str(ctx.exception).lower())
+            self.assertTrue(second.get("alreadyExists"))
+            self.assertEqual(second["rootPath"], str(root))
+            self.assertEqual(second["workspaceId"], first["workspaceId"])
+            self.assertEqual(second["manifestPath"], first["manifestPath"])
+            self.assertNotIn("alreadyExists", first)
 
     def test_appends_to_gitignore(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -139,6 +141,7 @@ class InitWorkspaceTests(unittest.TestCase):
             self.assertIn(".context-graph/schema.feedback.json", text)
             self.assertIn(".context-graph/idf_stats.json", text)
             self.assertIn(".context-graph/notion_cursor.json", text)
+            self.assertIn(".context-graph/markdown_cursor.json", text)
 
     def test_creates_gitignore_if_missing(self):
         with tempfile.TemporaryDirectory() as tmp:

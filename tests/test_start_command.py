@@ -33,6 +33,8 @@ class StartCommandSmokeTests(unittest.TestCase):
             "load_notion_cursor",
             "filter_pages_by_cursor",
             "save_notion_cursor",
+            "load_markdown_cursor",
+            "save_markdown_cursor",
         ):
             self.assertIn(phrase, text)
 
@@ -50,8 +52,20 @@ class StartCommandSmokeTests(unittest.TestCase):
     def test_notion_first_batch_cap_is_precise(self):
         text = self.COMMAND_PATH.read_text(encoding="utf-8")
         self.assertNotIn("Continue beyond the first 50", text)
-        self.assertIn("continue with the first 50 matching pages", text.lower())
-        self.assertIn("only the first 50 matching pages were considered", text)
+        self.assertNotIn("the first 50 matching pages", text)
+        self.assertIn("Page size: 25", text)
+        self.assertIn("hard cap for the first batch is 25 pages", text)
+        self.assertIn("Only the first 25 matching pages were considered.", text)
+
+    def test_markdown_path_runs_arbitration_before_indexing(self):
+        text = self.COMMAND_PATH.read_text(encoding="utf-8")
+        self.assertIn('"index": false', text)
+        self.assertIn("pending-arbitration", text)
+        self.assertIn("index_records", text)
+
+    def test_already_initialized_workspace_is_not_fatal(self):
+        text = self.COMMAND_PATH.read_text(encoding="utf-8")
+        self.assertIn("alreadyExists", text)
 
 
 if __name__ == "__main__":

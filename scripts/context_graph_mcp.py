@@ -25,11 +25,13 @@ from context_graph_core import (
     list_proposals,
     list_pushable_records,
     load_graph,
+    load_markdown_cursor,
     load_notion_cursor,
     load_push_state,
     plan_push,
     promote_pattern,
     record_to_notion_blocks,
+    save_markdown_cursor,
     save_notion_cursor,
     save_push_state,
     search_graph,
@@ -191,6 +193,23 @@ def handle_save_notion_cursor(arguments: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("cursor must be an object")
     workspace_root = arguments.get("workspaceRoot")
     save_notion_cursor(cursor, workspace_root)
+    return {"cursor": cursor, "saved": True}
+
+
+def handle_load_markdown_cursor(arguments: dict[str, Any]) -> dict[str, Any]:
+    workspace_root = arguments.get("workspaceRoot")
+    cursor = load_markdown_cursor(workspace_root)
+    return {"cursor": cursor}
+
+
+def handle_save_markdown_cursor(arguments: dict[str, Any]) -> dict[str, Any]:
+    if "cursor" not in arguments:
+        raise ValueError("Missing required field: cursor")
+    cursor = arguments["cursor"]
+    if not isinstance(cursor, dict):
+        raise ValueError("cursor must be an object")
+    workspace_root = arguments.get("workspaceRoot")
+    save_markdown_cursor(cursor, workspace_root)
     return {"cursor": cursor, "saved": True}
 
 
@@ -683,7 +702,7 @@ TOOLS: list[ToolSpec] = [
     ToolSpec(
         name="ingest_markdown",
         title="Ingest Markdown",
-        description="Scan a markdown file or directory, classify records from front matter and headings, and optionally index them.",
+        description="Scan a markdown file or directory, classify records from front matter and headings, and optionally index them. When a per-file mtime cursor is provided, files unchanged since the cursor was recorded are skipped and the response carries an advanced cursor.",
         input_schema={
             "type": "object",
             "properties": {
@@ -693,6 +712,10 @@ TOOLS: list[ToolSpec] = [
                 "recursive": {"type": "boolean"},
                 "index": {"type": "boolean"},
                 "graphPath": {"type": "string"},
+                "cursor": {
+                    "type": "object",
+                    "description": "Optional per-file mtime cursor (absolute path to epoch-second mtime). When present, unchanged files are skipped and the result includes an advanced cursor.",
+                },
             },
             "additionalProperties": False,
         },
@@ -702,6 +725,9 @@ TOOLS: list[ToolSpec] = [
                 "rootPath": {"type": "string"},
                 "fileCount": {"type": "number"},
                 "recordIds": {"type": "array"},
+                "skippedFileCount": {"type": "number"},
+                "skippedFiles": {"type": "array"},
+                "cursor": {"type": "object"},
             },
             "required": ["rootPath", "fileCount", "recordIds"],
         },
@@ -806,6 +832,49 @@ TOOLS: list[ToolSpec] = [
             "required": ["cursor", "saved"],
         },
         handler=handle_save_notion_cursor,
+    ),
+    ToolSpec(
+        name="load_markdown_cursor",
+        title="Load Markdown Cursor",
+        description="Read the workspace's per-file markdown ingest cursor mapping absolute file path to last-seen mtime.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workspaceRoot": {"type": "string"},
+            },
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "cursor": {"type": "object"},
+            },
+            "required": ["cursor"],
+        },
+        handler=handle_load_markdown_cursor,
+    ),
+    ToolSpec(
+        name="save_markdown_cursor",
+        title="Save Markdown Cursor",
+        description="Persist a per-file markdown ingest cursor (absolute path to mtime) to the workspace.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "workspaceRoot": {"type": "string"},
+                "cursor": {"type": "object"},
+            },
+            "required": ["cursor"],
+            "additionalProperties": False,
+        },
+        output_schema={
+            "type": "object",
+            "properties": {
+                "cursor": {"type": "object"},
+                "saved": {"type": "boolean"},
+            },
+            "required": ["cursor", "saved"],
+        },
+        handler=handle_save_markdown_cursor,
     ),
     ToolSpec(
         name="filter_pages_by_cursor",

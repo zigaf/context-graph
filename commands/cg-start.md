@@ -37,11 +37,13 @@ details unless an error requires them.
      `mcp__context-graph__init_workspace` with that root. Set
      `workspaceRoot` to that absolute path.
    - `N`: stop and say `Setup canceled.`
-5. If `init_workspace` reports that the workspace already exists, continue
-   with that existing workspace instead of treating it as fatal and set
-   `workspaceRoot` to the existing workspace root.
-6. Use `workspaceRoot` for later Context Graph tool calls instead of relying
-   on the current working directory.
+5. If the `init_workspace` response has `alreadyExists: true`, continue with
+   that existing workspace and set `workspaceRoot` to its `rootPath`. Treat
+   this as a normal success, not an error.
+6. Use the `rootPath` returned by `init_workspace` (which is the canonical,
+   resolved path — for example, `/tmp` may resolve to `/private/tmp` on
+   macOS) as `workspaceRoot` for all later Context Graph tool calls. Do not
+   reconstruct it from the user's input.
 
 ## Step 2: Source Selection
 
@@ -50,6 +52,9 @@ Parse `$ARGUMENTS` for an optional first token:
 - `notion`: choose Notion without asking.
 - `markdown`: choose Local markdown without asking.
 - `skip`: initialize only and skip first sync.
+- A bare path that resolves to an existing directory and contains at least
+  one `.md` file: treat as if the user typed `markdown <path>`. Skip the
+  source-selection prompt and use the path in Step 3B.
 
 If no source token is present, ask:
 
@@ -74,27 +79,26 @@ Use this path when the user chose Notion.
 2. Load the stored page freshness state by calling
    `mcp__context-graph__load_notion_cursor` with
    `{"workspaceRoot": "<workspaceRoot>"}`.
-3. Search Notion with the available official Notion search tool and collect
-   up to 50 matching page stubs for this first onboarding sync:
+3. Search Notion with the available official Notion search tool to collect
+   page stubs for this first onboarding sync:
    - Query: the user's scope.
    - Query type: internal.
-   - Page size: use the largest supported value up to 50.
+   - Page size: 25 (the current Notion MCP per-call maximum).
    - Filters: `{}`.
-   - If the search tool supports pagination or cursors, continue fetching
-     result pages until either there are no more results or 50 page stubs have
-     been collected.
+   - The current Notion MCP search does not return a continuation cursor or a
+     total-result count, so a single call is the entire result set this
+     onboarding has access to. The hard cap for the first batch is 25 pages.
 4. If no Notion search tool is available, tell the user:
    `Notion is not connected in this session. Connect the official Notion OAuth integration, then rerun /cg-start notion <scope>.`
    Stop without changing the graph.
 5. If search returns no pages, report that no matching Notion pages were found
-   and ask the user to rerun with a narrower or different scope.
-6. If the search indicates that more than 50 matching pages are available,
-   summarize that this first onboarding sync can only use the first 50 matching
-   pages and ask:
-   `More than 50 Notion pages match <scope>. Continue with the first 50 matching pages, or narrow the scope? [continue/narrow]`
+   and ask the user to rerun with a broader or different scope.
+6. If exactly 25 results were returned, treat the result set as possibly
+   truncated and ask before continuing:
+   `Notion returned 25 matching pages — that is the per-call cap, so there may be more. Continue with these 25, or narrow the scope to be sure? [continue/narrow]`
    Stop unless the user chooses `continue`; if they choose `narrow`, ask for a
-   narrower scope and rerun the search from step 3. If they choose `continue`,
-   proceed using only the first 50 matching page stubs already collected.
+   narrower scope and rerun the search from step 3. If fewer than 25 pages
+   came back, skip this prompt — the result set is complete.
 7. Build page stubs from search results:
    `{"id": "<page-id>", "last_edited_time": "<timestamp>"}`
 8. Call `mcp__context-graph__filter_pages_by_cursor` with:
@@ -105,14 +109,24 @@ Use this path when the user chose Notion.
 10. For each fresh page:
     - Fetch it with the available official Notion fetch tool.
     - Build a draft record with:
-      - `id`: `notion:<32-hex page id>`
-      - `title`: page title
-      - `content`: markdown body from the fetched page
+      - `id`: `notion:<32-hex page id without dashes>`
+      - `title`: the `title` field of the fetch response (strip a leading
+        emoji and surrounding whitespace if present)
+      - `content`: the markdown text inside the `<content>...</content>` block
+        of the fetch response. Drop the `Here is the result of "view"...`
+        preamble and the surrounding `<page>`, `<ancestor-path>`, and
+        `<properties>` tags. Keep inline `<page url="...">child</page>`
+        references as plain text.
       - `source.system`: `notion`
-      - `source.url`: Notion URL
-      - `source.metadata.notionPageId`: raw page id
-      - `source.metadata.last_edited_time`: search timestamp
-      - `source.metadata.parent`: ancestor titles joined by ` > ` when available
+      - `source.url`: Notion URL from the fetch response
+      - `source.metadata.notionPageId`: raw page id without dashes
+      - `source.metadata.last_edited_time`: the `timestamp` from the search
+        result for this page (the fetch response does not carry it)
+      - `source.metadata.parent`: ancestor titles joined by ` > ` in
+        top-down order (root first, immediate parent last). The fetch
+        response lists ancestors immediate-first as `<parent-page>`,
+        `<ancestor-2-page>`, `<ancestor-3-page>`, ...; reverse that order
+        before joining. Omit the field when no ancestors are present.
     - Call `mcp__context-graph__classify_record` with
       `{"record": <draft>, "workspaceRoot": "<workspaceRoot>"}`.
     - If `source.metadata.classifierNotes.arbiter == "pending-arbitration"`,
@@ -132,10 +146,15 @@ Use this path when the user chose Notion.
 12. Advance the loaded cursor for each successfully indexed fresh page and call
     `mcp__context-graph__save_notion_cursor` with
     `{"cursor": <advanced cursor>, "workspaceRoot": "<workspaceRoot>"}`.
-13. Report the actual pulled, skipped, and indexed counts. If the search was
-    capped at 50, say that only the first 50 matching pages were considered in
-    the summary. If the user narrowed the scope, say so in the summary:
-    `Context Graph is ready. Source: Notion. <N> pages pulled, <M> pages skipped, <R> records indexed. <cap-or-narrowing-note> Try: /cg-search <scope>`
+13. Report the actual pulled, skipped, and indexed counts. The summary always
+    starts with `Context Graph is ready. Source: Notion.` and then includes:
+    - `<N> pages pulled, <M> pages skipped, <R> records indexed.`
+    - One of the following follow-on sentences only when relevant:
+      - If 25 pages came back from search and the user accepted the truncated
+        result in step 6: `Only the first 25 matching pages were considered.`
+      - If the user narrowed the scope in step 6: `Scope was narrowed to <new scope>.`
+      - Otherwise omit any extra sentence — do not emit a literal placeholder.
+    - `Try: /cg-search <scope>`
 
 ## Step 3B: Local Markdown First Sync
 
@@ -146,19 +165,46 @@ Use this path when the user chose Local markdown.
    - Otherwise ask:
      `Which folder of markdown notes should I index?`
 2. Resolve the path to an absolute path.
-3. Call `mcp__context-graph__ingest_markdown` with:
+3. Load the per-file freshness state by calling
+   `mcp__context-graph__load_markdown_cursor` with
+   `{"workspaceRoot": "<workspaceRoot>"}`.
+4. Call `mcp__context-graph__ingest_markdown` with the loaded cursor and
+   `index: false` to get classified records for files that have changed
+   since the cursor was last saved:
    ```json
    {
      "rootPath": "<absolute notes path>",
      "recursive": true,
-     "index": true,
-     "graphPath": "<workspaceRoot>/.context-graph/graph.json"
+     "index": false,
+     "cursor": <loaded cursor>
    }
    ```
-4. If `fileCount` is zero, report:
+5. If `fileCount` is zero and `skippedFileCount` is zero, report:
    `No markdown files found under <path>. Check the folder and rerun /cg-start markdown <path>.`
-5. Otherwise report:
-   `Context Graph is ready. Source: Local markdown. <N> files processed, <R> records indexed. Try: /cg-search <folder name or topic>`
+   Stop.
+6. If `fileCount` is zero but `skippedFileCount` is greater than zero, report:
+   `Context Graph is ready. No markdown changes found under <path>. Try: /cg-search <folder name or topic>`
+   Stop.
+7. For each returned record, run the same arbitration step used in Step 3A.10:
+   - If `source.metadata.classifierNotes.arbiter == "pending-arbitration"`,
+     resolve it in this live session using the current agent, not an external
+     API.
+   - Read `arbitrationRequest`: use `record`, `candidates`, `allowedValues`,
+     and `requiredFields`.
+   - For each pending field, pick one value from that field's `allowedValues`.
+     Return null only when nothing fits and the field is not required.
+   - Override `record.markers.<field>` with the chosen values.
+   - Set `record.source.metadata.classifierNotes.arbiter` to `llm-session`
+     and fill `reasoning` with one sentence.
+   - If the classifier was deterministic or fallback, keep the returned record
+     unchanged.
+8. Call `mcp__context-graph__index_records` once with all finalized records:
+   `{"records": <finalized records>, "graphPath": "<workspaceRoot>/.context-graph/graph.json"}`.
+9. Persist the advanced cursor returned by `ingest_markdown` by calling
+   `mcp__context-graph__save_markdown_cursor` with
+   `{"cursor": <returned cursor>, "workspaceRoot": "<workspaceRoot>"}`.
+10. Report:
+    `Context Graph is ready. Source: Local markdown. <N> files processed, <M> files skipped, <R> records indexed. Try: /cg-search <folder name or topic>`
 
 ## Step 3C: Skip
 

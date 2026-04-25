@@ -201,6 +201,43 @@ def notion_cursor_path(start: Path | None = None) -> Path:
     return _resolve_workspace_file("notion_cursor.json", start)
 
 
+def markdown_cursor_path(start: Path | None = None) -> Path:
+    return _resolve_workspace_file("markdown_cursor.json", start)
+
+
+def load_markdown_cursor(workspace_root: Path | str | None = None) -> dict[str, Any]:
+    """Read the per-file markdown ingest cursor for a workspace.
+
+    Returns `{}` when the file is missing, unparseable, or not a dict. The
+    cursor maps `absolute file path -> mtime float (epoch seconds)`; callers
+    should treat an absent key as "never seen".
+    """
+    start = Path(workspace_root) if workspace_root is not None else None
+    path = markdown_cursor_path(start)
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return data
+
+
+def save_markdown_cursor(
+    cursor: dict[str, Any], workspace_root: Path | str | None = None
+) -> None:
+    """Persist the per-file markdown ingest cursor for a workspace."""
+    start = Path(workspace_root) if workspace_root is not None else None
+    path = markdown_cursor_path(start)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as f:
+        json.dump(cursor, f, ensure_ascii=True, indent=2)
+        f.write("\n")
+
+
 def load_notion_cursor(workspace_root: Path | str | None = None) -> dict[str, Any]:
     """Read the per-page Notion cursor for a workspace.
 
@@ -325,6 +362,7 @@ GITIGNORE_ENTRIES = [
     ".context-graph/idf_stats.json",
     ".context-graph/notion_cursor.json",
     ".context-graph/notion_push.json",
+    ".context-graph/markdown_cursor.json",
 ]
 
 
@@ -351,7 +389,14 @@ def init_workspace(payload: dict[str, Any]) -> dict[str, Any]:
     context_dir = root / ".context-graph"
     manifest_path = context_dir / "workspace.json"
     if manifest_path.exists():
-        raise ValueError(f"Workspace already initialized at {root}.")
+        existing = load_workspace_manifest(root)
+        return {
+            "rootPath": str(root),
+            "workspaceId": existing.get("id"),
+            "manifestPath": str(manifest_path),
+            "notion": existing.get("notion"),
+            "alreadyExists": True,
+        }
 
     context_dir.mkdir(parents=True, exist_ok=True)
     created_at = now_iso()
@@ -2382,19 +2427,27 @@ def ingest_markdown(payload: dict[str, Any], schema: dict[str, Any] | None = Non
         raise ValueError(f"Path does not exist: {root_path}")
     recursive = bool(payload.get("recursive", True))
     pattern = str(payload.get("pattern", "*.md"))
-    files, scan_root, records = collect_markdown_records(
+
+    cursor_in = payload.get("cursor")
+    if cursor_in is not None and not isinstance(cursor_in, dict):
+        raise ValueError("cursor must be an object mapping absolute paths to mtimes.")
+    fresh_files, scan_root, records, skipped_paths, cursor_out = _collect_fresh_markdown(
         root_path,
         schema,
-        system="markdown",
         pattern=pattern,
         recursive=recursive,
+        cursor=cursor_in,
     )
     result = {
         "rootPath": str(scan_root),
-        "fileCount": len(files),
+        "fileCount": len(fresh_files),
         "records": records,
         "recordIds": [record["id"] for record in records],
     }
+    if cursor_in is not None:
+        result["skippedFileCount"] = len(skipped_paths)
+        result["skippedFiles"] = skipped_paths
+        result["cursor"] = cursor_out
 
     if payload.get("index", True):
         index_result = index_records(
@@ -2411,6 +2464,49 @@ def ingest_markdown(payload: dict[str, Any], schema: dict[str, Any] | None = Non
         result["dryRun"] = True
 
     return result
+
+
+def _collect_fresh_markdown(
+    root_path: Path,
+    schema: dict[str, Any],
+    *,
+    pattern: str,
+    recursive: bool,
+    cursor: dict[str, Any] | None,
+) -> tuple[list[Path], Path, list[dict[str, Any]], list[str], dict[str, Any]]:
+    """Wrap `collect_markdown_records` with optional per-file mtime filtering.
+
+    When `cursor` is None, behaves like a normal full scan and the returned
+    cursor mapping is `{}`. When `cursor` is provided, files whose absolute
+    path is in the cursor with mtime <= the stored value are skipped; the
+    returned cursor mapping advances skipped files (carrying the prior mtime)
+    and processed files (using the current mtime).
+    """
+    files, scan_root, records = collect_markdown_records(
+        root_path,
+        schema,
+        system="markdown",
+        pattern=pattern,
+        recursive=recursive,
+    )
+    if cursor is None:
+        return files, scan_root, records, [], {}
+
+    skipped_paths: list[str] = []
+    fresh_files: list[Path] = []
+    fresh_records: list[dict[str, Any]] = []
+    new_cursor: dict[str, Any] = dict(cursor)
+    for file_path, record in zip(files, records):
+        abs_path = str(file_path.resolve())
+        current_mtime = file_path.stat().st_mtime
+        stored = cursor.get(abs_path)
+        if isinstance(stored, (int, float)) and current_mtime <= float(stored):
+            skipped_paths.append(abs_path)
+            continue
+        fresh_files.append(file_path)
+        fresh_records.append(record)
+        new_cursor[abs_path] = current_mtime
+    return fresh_files, scan_root, fresh_records, skipped_paths, new_cursor
 
 
 def ingest_notion_export(payload: dict[str, Any], schema: dict[str, Any] | None = None) -> dict[str, Any]:
