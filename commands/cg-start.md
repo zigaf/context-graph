@@ -74,19 +74,25 @@ Use this path when the user chose Notion.
 2. Load the stored page freshness state by calling
    `mcp__context-graph__load_notion_cursor` with
    `{"workspaceRoot": "<workspaceRoot>"}`.
-3. Search Notion with the available official Notion search tool:
+3. Search Notion with the available official Notion search tool and collect
+   up to 50 matching page stubs for this first onboarding sync:
    - Query: the user's scope.
    - Query type: internal.
-   - Page size: 10.
+   - Page size: use the largest supported value up to 50.
    - Filters: `{}`.
+   - If the search tool supports pagination or cursors, continue fetching
+     result pages until either there are no more results or 50 page stubs have
+     been collected.
 4. If no Notion search tool is available, tell the user:
    `Notion is not connected in this session. Connect the official Notion OAuth integration, then rerun /cg-start notion <scope>.`
    Stop without changing the graph.
 5. If search returns no pages, report that no matching Notion pages were found
    and ask the user to rerun with a narrower or different scope.
-6. If search returns more than 50 pages, summarize the count and ask:
-   `This will inspect <N> Notion pages. Continue? [y/N]`
-   Stop unless the user confirms.
+6. If the search indicates that more than 50 matching pages are available,
+   summarize that the first batch is capped at 50 and ask:
+   `More than 50 Notion pages match <scope>. Continue beyond the first 50, or narrow the scope? [continue/narrow]`
+   Stop unless the user chooses `continue`; if they choose `narrow`, ask for a
+   narrower scope and rerun the search from step 3.
 7. Build page stubs from search results:
    `{"id": "<page-id>", "last_edited_time": "<timestamp>"}`
 8. Call `mcp__context-graph__filter_pages_by_cursor` with:
@@ -124,8 +130,9 @@ Use this path when the user chose Notion.
 12. Advance the loaded cursor for each successfully indexed fresh page and call
     `mcp__context-graph__save_notion_cursor` with
     `{"cursor": <advanced cursor>, "workspaceRoot": "<workspaceRoot>"}`.
-13. Report:
-    `Context Graph is ready. Source: Notion. <N> pages pulled, <M> pages skipped, <R> records indexed. Try: /cg-search <scope>`
+13. Report the actual pulled, skipped, and indexed counts. If the search was
+    capped at 50 or the user narrowed the scope, say so in the summary:
+    `Context Graph is ready. Source: Notion. <N> pages pulled, <M> pages skipped, <R> records indexed. <cap-or-narrowing-note> Try: /cg-search <scope>`
 
 ## Step 3B: Local Markdown First Sync
 
