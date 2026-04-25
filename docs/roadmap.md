@@ -52,6 +52,7 @@ Goal: make the plugin first-class in Claude Code, not only as an MCP server.
 - [x] Add a Claude Code manifest at `.claude-plugin/plugin.json` so the harness discovers skills, commands, hooks, and the MCP server
 - [x] Switch `.mcp.json` server path to `${CLAUDE_PLUGIN_ROOT}/scripts/context_graph_mcp.py` so the MCP server resolves when the plugin is installed outside this repo
 - [x] Scope the PostToolUse reindex hook via `scripts/post_edit_reindex.py` — reindexes only when the edited file's directory is at or below a directory already represented in the graph (markdown or notion-export sources)
+- [x] Add `/cg-start` as a hybrid first-run wizard that initializes the workspace and guides the first Notion or local markdown sync.
 - [ ] Validate in a live session that the same plugin tree loads in both Claude Code and Codex without duplication (Codex-side `${CLAUDE_PLUGIN_ROOT}` expansion is untested)
 
 Note on `.app.json`: it is a Codex-only concept (consumed by `.codex-plugin/plugin.json`). Claude Code discoverability comes entirely from `.claude-plugin/plugin.json`, so there is nothing to populate in `.app.json` for this phase.
