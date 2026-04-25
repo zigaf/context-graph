@@ -88,7 +88,7 @@ class PlanNotionPushHandlerTests(unittest.TestCase):
             self.assertIn("pushState", result)
             self.assertEqual(len(result["plan"]["creates"]), 2)
             self.assertEqual(result["plan"]["updates"], [])
-            self.assertEqual(result["pushState"], {})
+            self.assertEqual(result["pushState"], {"pending": [], "records": {}})
 
     def test_plan_respects_record_ids(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -126,10 +126,10 @@ class ApplyNotionPushResultHandlerTests(unittest.TestCase):
                 }
             )
             self.assertIn("pushState", result)
-            self.assertEqual(result["pushState"]["promoted:rule-a"], "page-xyz")
+            self.assertEqual(result["pushState"]["records"]["promoted:rule-a"]["notionPageId"], "page-xyz")
 
             stored = load_push_state(workspace)
-            self.assertEqual(stored["promoted:rule-a"], "page-xyz")
+            self.assertEqual(stored["records"]["promoted:rule-a"]["notionPageId"], "page-xyz")
 
 
 class RecordToNotionPayloadHandlerTests(unittest.TestCase):

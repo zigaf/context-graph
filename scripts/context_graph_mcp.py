@@ -295,9 +295,17 @@ def handle_apply_notion_push_result(arguments: dict[str, Any]) -> dict[str, Any]
         raise ValueError("Missing required field: recordId")
     if not notion_page_id:
         raise ValueError("Missing required field: notionPageId")
+    revision_input = arguments.get("revision")
+    pushed_at_input = arguments.get("pushedAt")
     workspace = _workspace_from_args(arguments)
     state = load_push_state(workspace)
-    new_state = apply_push_result(str(record_id), str(notion_page_id), state)
+    new_state = apply_push_result(
+        str(record_id),
+        str(notion_page_id),
+        state,
+        revision=int(revision_input) if revision_input is not None else None,
+        pushed_at=str(pushed_at_input) if pushed_at_input else None,
+    )
     save_push_state(new_state, workspace)
     return {
         "recordId": str(record_id),

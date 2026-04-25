@@ -113,12 +113,26 @@ class PushStateRoundTripTests(unittest.TestCase):
     def test_load_missing_returns_empty_dict(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = _make_workspace(tmp, notion_root="root-page")
-            self.assertEqual(load_push_state(workspace), {})
+            self.assertEqual(load_push_state(workspace), {"pending": [], "records": {}})
 
     def test_round_trip_preserves_mapping(self):
         with tempfile.TemporaryDirectory() as tmp:
             workspace = _make_workspace(tmp, notion_root="root-page")
-            state = {"promoted:rule-a": "notion-page-1", "promoted:decision-b": "notion-page-2"}
+            state = {
+                "pending": [],
+                "records": {
+                    "promoted:rule-a": {
+                        "notionPageId": "notion-page-1",
+                        "lastPushedRevision": None,
+                        "lastPushedAt": None,
+                    },
+                    "promoted:decision-b": {
+                        "notionPageId": "notion-page-2",
+                        "lastPushedRevision": None,
+                        "lastPushedAt": None,
+                    },
+                },
+            }
             save_push_state(state, workspace)
             loaded = load_push_state(workspace)
             self.assertEqual(loaded, state)
@@ -136,7 +150,7 @@ class PlanPushTests(unittest.TestCase):
             {"id": "promoted:rule-a", "title": "Rule A"},
             {"id": "promoted:decision-b", "title": "Decision B"},
         ]
-        plan = plan_push(records, {})
+        plan = plan_push(records, {"pending": [], "records": {}})
         self.assertEqual([item["id"] for item in plan["creates"]], ["promoted:rule-a", "promoted:decision-b"])
         self.assertEqual(plan["updates"], [])
 
@@ -145,7 +159,16 @@ class PlanPushTests(unittest.TestCase):
             {"id": "promoted:rule-a", "title": "Rule A"},
             {"id": "promoted:decision-b", "title": "Decision B"},
         ]
-        state = {"promoted:rule-a": "notion-page-1"}
+        state = {
+            "pending": [],
+            "records": {
+                "promoted:rule-a": {
+                    "notionPageId": "notion-page-1",
+                    "lastPushedRevision": None,
+                    "lastPushedAt": None,
+                }
+            },
+        }
         plan = plan_push(records, state)
         self.assertEqual([item["id"] for item in plan["creates"]], ["promoted:decision-b"])
         self.assertEqual(len(plan["updates"]), 1)
@@ -154,7 +177,16 @@ class PlanPushTests(unittest.TestCase):
 
     def test_all_known_yields_no_creates(self):
         records = [{"id": "promoted:rule-a"}]
-        state = {"promoted:rule-a": "notion-page-1"}
+        state = {
+            "pending": [],
+            "records": {
+                "promoted:rule-a": {
+                    "notionPageId": "notion-page-1",
+                    "lastPushedRevision": None,
+                    "lastPushedAt": None,
+                }
+            },
+        }
         plan = plan_push(records, state)
         self.assertEqual(plan["creates"], [])
         self.assertEqual(len(plan["updates"]), 1)
@@ -162,26 +194,70 @@ class PlanPushTests(unittest.TestCase):
 
 class ApplyPushResultTests(unittest.TestCase):
     def test_adds_new_mapping(self):
-        state = {}
+        state = {"pending": [], "records": {}}
         result = apply_push_result("promoted:rule-a", "notion-page-1", state)
-        self.assertEqual(result, {"promoted:rule-a": "notion-page-1"})
+        self.assertEqual(
+            result,
+            {
+                "pending": [],
+                "records": {
+                    "promoted:rule-a": {
+                        "notionPageId": "notion-page-1",
+                        "lastPushedRevision": None,
+                        "lastPushedAt": None,
+                    }
+                },
+            },
+        )
 
     def test_overwrites_existing_mapping(self):
-        state = {"promoted:rule-a": "old-page"}
+        state = {
+            "pending": [],
+            "records": {
+                "promoted:rule-a": {
+                    "notionPageId": "old-page",
+                    "lastPushedRevision": None,
+                    "lastPushedAt": None,
+                }
+            },
+        }
         result = apply_push_result("promoted:rule-a", "new-page", state)
-        self.assertEqual(result["promoted:rule-a"], "new-page")
+        self.assertEqual(result["records"]["promoted:rule-a"]["notionPageId"], "new-page")
 
     def test_preserves_other_entries(self):
-        state = {"promoted:rule-a": "page-a", "promoted:decision-b": "page-b"}
+        state = {
+            "pending": [],
+            "records": {
+                "promoted:rule-a": {
+                    "notionPageId": "page-a",
+                    "lastPushedRevision": None,
+                    "lastPushedAt": None,
+                },
+                "promoted:decision-b": {
+                    "notionPageId": "page-b",
+                    "lastPushedRevision": None,
+                    "lastPushedAt": None,
+                },
+            },
+        }
         result = apply_push_result("promoted:rule-a", "page-a2", state)
-        self.assertEqual(result["promoted:decision-b"], "page-b")
-        self.assertEqual(result["promoted:rule-a"], "page-a2")
+        self.assertEqual(result["records"]["promoted:decision-b"]["notionPageId"], "page-b")
+        self.assertEqual(result["records"]["promoted:rule-a"]["notionPageId"], "page-a2")
 
     def test_does_not_mutate_input(self):
-        state = {"promoted:rule-a": "page-a"}
+        state = {
+            "pending": [],
+            "records": {
+                "promoted:rule-a": {
+                    "notionPageId": "page-a",
+                    "lastPushedRevision": None,
+                    "lastPushedAt": None,
+                }
+            },
+        }
         apply_push_result("promoted:decision-b", "page-b", state)
         # Input state left untouched; callers must use the returned value.
-        self.assertNotIn("promoted:decision-b", state)
+        self.assertNotIn("promoted:decision-b", state["records"])
 
 
 class RecordToNotionBlocksTests(unittest.TestCase):
@@ -327,8 +403,8 @@ class PushToNotionTests(unittest.TestCase):
 
             # Push state now has entries for both promoted records.
             state = load_push_state(workspace)
-            self.assertEqual(state["promoted:rule-a"], "notion-new-1")
-            self.assertEqual(state["promoted:decision-b"], "notion-new-1")
+            self.assertEqual(state["records"]["promoted:rule-a"]["notionPageId"], "notion-new-1")
+            self.assertEqual(state["records"]["promoted:decision-b"]["notionPageId"], "notion-new-1")
 
     def test_apply_mode_updates_existing_pages(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -339,8 +415,19 @@ class PushToNotionTests(unittest.TestCase):
             # Pre-seed the push state so both rules already map to Notion pages.
             save_push_state(
                 {
-                    "promoted:rule-a": "existing-page-a",
-                    "promoted:decision-b": "existing-page-b",
+                    "pending": [],
+                    "records": {
+                        "promoted:rule-a": {
+                            "notionPageId": "existing-page-a",
+                            "lastPushedRevision": None,
+                            "lastPushedAt": None,
+                        },
+                        "promoted:decision-b": {
+                            "notionPageId": "existing-page-b",
+                            "lastPushedRevision": None,
+                            "lastPushedAt": None,
+                        },
+                    },
                 },
                 workspace,
             )
@@ -437,8 +524,8 @@ class PushToNotionTests(unittest.TestCase):
             self.assertFalse(result["dryRun"])
             self.assertEqual(len(client.create_calls), 1)
             state = load_push_state(workspace)
-            self.assertIn("promoted:rule-a", state)
-            self.assertNotIn("promoted:decision-b", state)
+            self.assertIn("promoted:rule-a", state["records"])
+            self.assertNotIn("promoted:decision-b", state["records"])
 
 
 if __name__ == "__main__":

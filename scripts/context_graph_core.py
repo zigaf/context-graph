@@ -2914,23 +2914,24 @@ def save_push_state(
 
 def plan_push(
     records: list[dict[str, Any]],
-    state: dict[str, str],
+    state: dict[str, Any],
 ) -> dict[str, list[dict[str, Any]]]:
-    """Classify ``records`` into creates vs updates against the push ``state``.
+    """Classify ``records`` into creates vs updates against the auto-push ``state``.
 
-    Pure function: does not touch the network or disk. Records whose id is
-    already mapped in ``state`` become ``updates`` entries (paired with the
-    existing Notion page id). Everything else becomes a ``create``.
+    Pure: does not touch the network or disk. Records present in
+    ``state["records"]`` become ``updates`` paired with their existing
+    Notion page id; everything else becomes a ``create``.
     """
     creates: list[dict[str, Any]] = []
     updates: list[dict[str, Any]] = []
+    records_state = state.get("records") or {}
     for record in records:
         record_id = record.get("id")
         if not record_id:
             continue
-        mapped = state.get(str(record_id))
-        if mapped:
-            updates.append({"record": record, "notionPageId": mapped})
+        mapped = records_state.get(str(record_id))
+        if isinstance(mapped, dict) and mapped.get("notionPageId"):
+            updates.append({"record": record, "notionPageId": mapped["notionPageId"]})
         else:
             creates.append(record)
     return {"creates": creates, "updates": updates}
@@ -2939,16 +2940,27 @@ def plan_push(
 def apply_push_result(
     record_id: str,
     notion_page_id: str,
-    state: dict[str, str],
-) -> dict[str, str]:
-    """Return a new state dict with ``record_id -> notion_page_id`` added.
+    state: dict[str, Any],
+    *,
+    revision: int | None = None,
+    pushed_at: str | None = None,
+) -> dict[str, Any]:
+    """Return a new state dict with the per-record entry updated.
 
-    Does not mutate the input mapping; callers must use the return value.
-    Overwrites any prior mapping for the same ``record_id`` so re-creates
-    after a Notion-side restore stay idempotent.
+    Does not mutate the input state. ``revision`` and ``pushed_at`` are
+    optional but should be passed by callers that have classified the
+    record (so we know whether the next push needs to update or skip).
     """
-    new_state = dict(state)
-    new_state[str(record_id)] = str(notion_page_id)
+    new_state: dict[str, Any] = {
+        "pending": list(state.get("pending") or []),
+        "records": dict(state.get("records") or {}),
+    }
+    new_state["records"][str(record_id)] = {
+        "notionPageId": str(notion_page_id),
+        "lastPushedRevision": revision,
+        "lastPushedAt": pushed_at,
+    }
+    new_state["pending"] = [item for item in new_state["pending"] if item != str(record_id)]
     return new_state
 
 
