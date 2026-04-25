@@ -64,8 +64,8 @@ def _seed_records(graph_path: str, workspace_root: Path) -> list[str]:
                 {
                     "id": "task:c",
                     "title": "Task C",
-                    "content": "Ordinary task, should be skipped.",
-                    "markers": {"type": "task", "status": "in-progress"},
+                    "content": "Ordinary incident, should be skipped.",
+                    "markers": {"type": "incident", "status": "in-progress"},
                     "source": {"system": "markdown", "metadata": {}},
                 },
             ],
@@ -563,6 +563,32 @@ class PushToNotionTests(unittest.TestCase):
             state = load_push_state(workspace)
             self.assertIn("promoted:rule-a", state["records"])
             self.assertNotIn("promoted:decision-b", state["records"])
+
+
+class PushableTypeExpansionTests(unittest.TestCase):
+    PUSHABLE_TYPES = {
+        "rule", "decision", "gotcha", "module-boundary",
+        "convention", "task", "bug", "bug-fix",
+    }
+
+    def test_all_seven_curator_types_are_pushable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(tmp, notion_root="root-page")
+            graph_path = str(ws / ".context-graph" / "graph.json")
+            records = []
+            for marker_type in sorted(self.PUSHABLE_TYPES):
+                rid = f"promoted:{marker_type}"
+                records.append({
+                    "id": rid,
+                    "title": f"Sample {marker_type}",
+                    "content": f"# {marker_type}\n\nBody.",
+                    "markers": {"type": marker_type, "status": "done"},
+                    "source": {"system": "context-graph", "metadata": {}},
+                })
+            index_records({"graphPath": graph_path, "workspaceRoot": str(ws), "records": records})
+            pushable = {r["id"] for r in list_pushable_records(graph_path)}
+            for marker_type in sorted(self.PUSHABLE_TYPES):
+                self.assertIn(f"promoted:{marker_type}", pushable)
 
 
 if __name__ == "__main__":

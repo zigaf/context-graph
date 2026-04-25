@@ -2790,7 +2790,18 @@ def unarchive_record(payload: dict[str, Any], schema: dict[str, Any] | None = No
 # not touch the Notion API. The slash command and the Python fallback in
 # ``scripts/notion_sync.py`` are responsible for the network calls.
 
-PUSHABLE_MARKER_TYPES = frozenset({"rule", "decision"})
+PUSHABLE_MARKER_TYPES = frozenset(
+    {
+        "rule",
+        "decision",
+        "gotcha",
+        "module-boundary",
+        "convention",
+        "task",
+        "bug",
+        "bug-fix",
+    }
+)
 
 
 def list_pushable_records(
@@ -2800,7 +2811,7 @@ def list_pushable_records(
     """Return records eligible for push-back to Notion.
 
     When ``record_ids`` is omitted, returns every record whose
-    ``markers.type`` is in ``PUSHABLE_MARKER_TYPES`` (rule or decision).
+    ``markers.type`` is in ``PUSHABLE_MARKER_TYPES``.
     When ``record_ids`` is supplied, the marker filter is bypassed so callers
     can push arbitrary records they have already picked. Missing ids are
     silently dropped rather than raising so batch callers do not stall on a
