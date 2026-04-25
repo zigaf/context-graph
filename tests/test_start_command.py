@@ -47,6 +47,12 @@ class StartCommandSmokeTests(unittest.TestCase):
         ):
             self.assertIn(phrase, text)
 
+    def test_notion_first_batch_cap_is_precise(self):
+        text = self.COMMAND_PATH.read_text(encoding="utf-8")
+        self.assertNotIn("Continue beyond the first 50", text)
+        self.assertIn("continue with the first 50 matching pages", text.lower())
+        self.assertIn("only the first 50 matching pages were considered", text)
+
 
 if __name__ == "__main__":
     unittest.main()

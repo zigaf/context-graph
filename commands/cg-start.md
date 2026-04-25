@@ -89,10 +89,12 @@ Use this path when the user chose Notion.
 5. If search returns no pages, report that no matching Notion pages were found
    and ask the user to rerun with a narrower or different scope.
 6. If the search indicates that more than 50 matching pages are available,
-   summarize that the first batch is capped at 50 and ask:
-   `More than 50 Notion pages match <scope>. Continue beyond the first 50, or narrow the scope? [continue/narrow]`
+   summarize that this first onboarding sync can only use the first 50 matching
+   pages and ask:
+   `More than 50 Notion pages match <scope>. Continue with the first 50 matching pages, or narrow the scope? [continue/narrow]`
    Stop unless the user chooses `continue`; if they choose `narrow`, ask for a
-   narrower scope and rerun the search from step 3.
+   narrower scope and rerun the search from step 3. If they choose `continue`,
+   proceed using only the first 50 matching page stubs already collected.
 7. Build page stubs from search results:
    `{"id": "<page-id>", "last_edited_time": "<timestamp>"}`
 8. Call `mcp__context-graph__filter_pages_by_cursor` with:
@@ -131,7 +133,8 @@ Use this path when the user chose Notion.
     `mcp__context-graph__save_notion_cursor` with
     `{"cursor": <advanced cursor>, "workspaceRoot": "<workspaceRoot>"}`.
 13. Report the actual pulled, skipped, and indexed counts. If the search was
-    capped at 50 or the user narrowed the scope, say so in the summary:
+    capped at 50, say that only the first 50 matching pages were considered in
+    the summary. If the user narrowed the scope, say so in the summary:
     `Context Graph is ready. Source: Notion. <N> pages pulled, <M> pages skipped, <R> records indexed. <cap-or-narrowing-note> Try: /cg-search <scope>`
 
 ## Step 3B: Local Markdown First Sync
