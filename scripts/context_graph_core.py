@@ -2884,16 +2884,31 @@ def load_push_state(workspace_root: Path | str | None = None) -> dict[str, Any]:
 
 
 def save_push_state(
-    state: dict[str, str],
+    state: dict[str, Any],
     workspace_root: Path | str | None = None,
 ) -> None:
-    """Persist the push-state mapping to ``.context-graph/notion_push.json``."""
+    """Persist the auto-push state to ``.context-graph/notion_push.json``."""
+    if not isinstance(state, dict):
+        raise TypeError("save_push_state expects a dict with 'pending' and 'records' keys")
     start = Path(str(workspace_root)) if workspace_root else None
     path = push_state_path(start)
     path.parent.mkdir(parents=True, exist_ok=True)
-    serialized = {str(key): str(value) for key, value in state.items() if value is not None}
+    pending_in = state.get("pending") or []
+    records_in = state.get("records") or {}
+    serialised: dict[str, Any] = {
+        "pending": [str(item) for item in pending_in if item],
+        "records": {},
+    }
+    for key, value in records_in.items():
+        if not isinstance(value, dict) or not value.get("notionPageId"):
+            continue
+        serialised["records"][str(key)] = {
+            "notionPageId": str(value["notionPageId"]),
+            "lastPushedRevision": value.get("lastPushedRevision"),
+            "lastPushedAt": value.get("lastPushedAt"),
+        }
     with path.open("w", encoding="utf-8") as f:
-        json.dump(serialized, f, ensure_ascii=True, indent=2, sort_keys=True)
+        json.dump(serialised, f, ensure_ascii=True, indent=2, sort_keys=True)
         f.write("\n")
 
 

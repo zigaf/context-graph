@@ -64,5 +64,30 @@ class LoadPushStateNewShapeTests(unittest.TestCase):
             self.assertEqual(state["records"]["notion:def"]["lastPushedRevision"], 3)
 
 
+class SavePushStateTests(unittest.TestCase):
+    def test_save_then_load_round_trip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(tmp)
+            payload = {
+                "pending": ["notion:abc", "notion:def"],
+                "records": {
+                    "notion:def": {
+                        "notionPageId": "page-2",
+                        "lastPushedRevision": 4,
+                        "lastPushedAt": "2026-04-26T19:00:00Z",
+                    }
+                },
+            }
+            save_push_state(payload, ws)
+            again = load_push_state(ws)
+            self.assertEqual(again, payload)
+
+    def test_save_rejects_non_dict_inputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(tmp)
+            with self.assertRaises(TypeError):
+                save_push_state(["notion:abc"], ws)  # type: ignore[arg-type]
+
+
 if __name__ == "__main__":
     unittest.main()
