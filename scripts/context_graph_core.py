@@ -2964,6 +2964,37 @@ def apply_push_result(
     return new_state
 
 
+def list_pending_pushes(workspace_root: Path | str | None = None) -> list[str]:
+    """Return the queued record ids in arrival order."""
+    state = load_push_state(workspace_root)
+    return list(state.get("pending") or [])
+
+
+def enqueue_push(record_id: str, workspace_root: Path | str | None = None) -> list[str]:
+    """Append ``record_id`` to the push queue if not already present.
+
+    Returns the new queue.
+    """
+    record_id = str(record_id)
+    state = load_push_state(workspace_root)
+    pending = list(state.get("pending") or [])
+    if record_id not in pending:
+        pending.append(record_id)
+    state["pending"] = pending
+    save_push_state(state, workspace_root)
+    return pending
+
+
+def dequeue_push(record_id: str, workspace_root: Path | str | None = None) -> list[str]:
+    """Remove ``record_id`` from the push queue. Idempotent."""
+    record_id = str(record_id)
+    state = load_push_state(workspace_root)
+    pending = [item for item in (state.get("pending") or []) if item != record_id]
+    state["pending"] = pending
+    save_push_state(state, workspace_root)
+    return pending
+
+
 def _rich_text(plain: str) -> list[dict[str, Any]]:
     """Wrap a plain string as a Notion rich_text run.
 

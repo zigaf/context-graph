@@ -13,6 +13,9 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from context_graph_core import (  # noqa: E402
+    dequeue_push,
+    enqueue_push,
+    list_pending_pushes,
     load_push_state,
     save_push_state,
 )
@@ -87,6 +90,37 @@ class SavePushStateTests(unittest.TestCase):
             ws = _make_workspace(tmp)
             with self.assertRaises(TypeError):
                 save_push_state(["notion:abc"], ws)  # type: ignore[arg-type]
+
+
+class QueueOpsTests(unittest.TestCase):
+    def test_enqueue_then_list(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(tmp)
+            enqueue_push("notion:rule-a", workspace_root=ws)
+            enqueue_push("notion:rule-b", workspace_root=ws)
+            pending = list_pending_pushes(workspace_root=ws)
+            self.assertEqual(pending, ["notion:rule-a", "notion:rule-b"])
+
+    def test_enqueue_dedupes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(tmp)
+            enqueue_push("notion:rule-a", workspace_root=ws)
+            enqueue_push("notion:rule-a", workspace_root=ws)
+            self.assertEqual(list_pending_pushes(workspace_root=ws), ["notion:rule-a"])
+
+    def test_dequeue_removes_entry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(tmp)
+            enqueue_push("notion:rule-a", workspace_root=ws)
+            enqueue_push("notion:rule-b", workspace_root=ws)
+            dequeue_push("notion:rule-a", workspace_root=ws)
+            self.assertEqual(list_pending_pushes(workspace_root=ws), ["notion:rule-b"])
+
+    def test_dequeue_unknown_is_noop(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(tmp)
+            dequeue_push("notion:none", workspace_root=ws)  # must not raise
+            self.assertEqual(list_pending_pushes(workspace_root=ws), [])
 
 
 if __name__ == "__main__":
