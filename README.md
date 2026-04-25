@@ -188,6 +188,7 @@ cd /Users/maksnalyvaiko/context-graph && PYTHONDONTWRITEBYTECODE=1 python3 -B -m
 
 The plugin includes slash-command instructions for:
 
+- `/cg-start`
 - `/cg-init`
 - `/cg-index`
 - `/cg-search`
