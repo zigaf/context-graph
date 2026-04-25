@@ -941,12 +941,14 @@ TOOLS: list[ToolSpec] = [
     ToolSpec(
         name="apply_notion_push_result",
         title="Apply Notion Push Result",
-        description="Record a {recordId -> notionPageId} mapping in .context-graph/notion_push.json so re-runs update instead of duplicating.",
+        description="Record a recordId -> notionPageId mapping (with optional revision/pushedAt metadata) and drain the recordId from the pending queue.",
         input_schema={
             "type": "object",
             "properties": {
                 "recordId": {"type": "string"},
                 "notionPageId": {"type": "string"},
+                "revision": {"type": ["integer", "null"]},
+                "pushedAt": {"type": ["string", "null"]},
                 "workspaceRoot": {"type": "string"},
             },
             "required": ["recordId", "notionPageId"],

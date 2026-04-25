@@ -259,6 +259,43 @@ class ApplyPushResultTests(unittest.TestCase):
         # Input state left untouched; callers must use the returned value.
         self.assertNotIn("promoted:decision-b", state["records"])
 
+    def test_drains_pending_on_success(self):
+        state = {
+            "pending": ["promoted:rule-a", "promoted:rule-b"],
+            "records": {},
+        }
+        new_state = apply_push_result("promoted:rule-a", "page-1", state)
+        self.assertEqual(new_state["pending"], ["promoted:rule-b"])
+        # input state must not be mutated
+        self.assertEqual(state["pending"], ["promoted:rule-a", "promoted:rule-b"])
+
+    def test_records_revision_and_timestamp(self):
+        state = {"pending": [], "records": {}}
+        new_state = apply_push_result(
+            "promoted:rule-a",
+            "page-1",
+            state,
+            revision=3,
+            pushed_at="2026-04-26T18:30:00Z",
+        )
+        self.assertEqual(
+            new_state["records"]["promoted:rule-a"]["lastPushedRevision"], 3
+        )
+        self.assertEqual(
+            new_state["records"]["promoted:rule-a"]["lastPushedAt"],
+            "2026-04-26T18:30:00Z",
+        )
+
+    def test_defaults_revision_and_timestamp_to_none(self):
+        state = {"pending": [], "records": {}}
+        new_state = apply_push_result("promoted:rule-a", "page-1", state)
+        self.assertIsNone(
+            new_state["records"]["promoted:rule-a"]["lastPushedRevision"]
+        )
+        self.assertIsNone(
+            new_state["records"]["promoted:rule-a"]["lastPushedAt"]
+        )
+
 
 class RecordToNotionBlocksTests(unittest.TestCase):
     def test_heading_produces_heading_1_block(self):

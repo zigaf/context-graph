@@ -131,6 +131,40 @@ class ApplyNotionPushResultHandlerTests(unittest.TestCase):
             stored = load_push_state(workspace)
             self.assertEqual(stored["records"]["promoted:rule-a"]["notionPageId"], "page-xyz")
 
+    def test_persists_revision_and_pushed_at(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            workspace = _make_workspace(tmp)
+
+            by_name = {tool.name: tool for tool in context_graph_mcp.TOOLS}
+            handler = by_name["apply_notion_push_result"].handler
+
+            result = handler(
+                {
+                    "recordId": "promoted:rule-a",
+                    "notionPageId": "page-1",
+                    "revision": 3,
+                    "pushedAt": "2026-04-26T18:30:00Z",
+                    "workspaceRoot": str(workspace),
+                }
+            )
+            self.assertEqual(
+                result["pushState"]["records"]["promoted:rule-a"]["lastPushedRevision"],
+                3,
+            )
+            self.assertEqual(
+                result["pushState"]["records"]["promoted:rule-a"]["lastPushedAt"],
+                "2026-04-26T18:30:00Z",
+            )
+
+            stored = load_push_state(workspace)
+            self.assertEqual(
+                stored["records"]["promoted:rule-a"]["lastPushedRevision"], 3
+            )
+            self.assertEqual(
+                stored["records"]["promoted:rule-a"]["lastPushedAt"],
+                "2026-04-26T18:30:00Z",
+            )
+
 
 class RecordToNotionPayloadHandlerTests(unittest.TestCase):
     def test_returns_payload_with_title_blocks_parent(self):
