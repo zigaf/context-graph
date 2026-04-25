@@ -16,7 +16,7 @@
         "url": "https://github.com/zigaf/context-graph.git"
       },
       "description": "Builds structured context graphs from notes using normalized markers, hierarchical paths, and explicit or inferred relations. Includes proactive curator skill for capturing rules / conventions / gotchas / decisions / intersections during sessions, optional Notion sync, and intent-aware retrieval (debug, implementation, architecture, product modes).",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "strict": true
     }
   ]
