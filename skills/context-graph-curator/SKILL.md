@@ -75,7 +75,7 @@ If Notion is not connected (no `rootPageId`) and the user has not declined boots
 
 > "Notion is not connected for this workspace. Run `/cg-sync-notion` once (OAuth, no API key) to enable proactive note management. Or run `/cg-init --offline` (or decline the bootstrap prompt) to keep notes only in the local graph."
 
-If declined, continue capturing locally — every step of the capture protocol works against the local graph alone. Skip step 5 (the enqueue is a no-op without a connected Notion workspace, so don't bother).
+If declined, continue capturing locally — every step of the capture protocol works against the local graph alone. Skip step 5 (no Notion to push to, so the enqueue would just accumulate on disk).
 
 ## Failure modes
 
