@@ -61,21 +61,29 @@ Both produce the same local graph. You can run them in the same workspace.
 
 ---
 
-## Pull vs push — important
+## How notes get to Notion (auto-push)
 
-Most commands are **read-only**: they pull notes from somewhere into the local graph. Only two paths ever write to Notion, and both are explicit:
+Once `/cg-bootstrap` runs and the Notion side is connected:
 
-| Path                           | Direction              | When                                                                                                      |
-| ------------------------------ | ---------------------- | --------------------------------------------------------------------------------------------------------- |
-| `/cg-start`                    | pull (Notion or MD)    | First-time onboarding wizard. **Never writes to Notion.**                                                 |
-| `/cg-sync-notion <scope>`      | pull                   | Regular incremental Notion sync.                                                                          |
-| `/cg-index <path>`             | pull                   | Ingest / re-ingest local markdown.                                                                        |
-| `/cg-bootstrap`                | **write Notion**       | Creates a root page + per-top-level-dir skeleton in Notion, once. Skip if your project already has pages. |
-| `/cg-sync-notion <scope> push` | **write Notion** (opt) | Pushes promoted rules / decisions back to Notion. Requires explicit `push` argument and a confirmation.   |
+- **You write notes locally.** Curator captures rules, decisions,
+  gotchas, module boundaries, conventions, tasks, and bug fixes during
+  your session and stores them in the local graph.
+- **Captures queue up.** They land in `.context-graph/notion_push.json`
+  under `pending`.
+- **A trigger fires.** Any of these counts as a logical session-end:
+  - a phrase like `готово`, `ship it`, `merged`, `done`, `закоммитим`
+  - a `git commit`, `git push`, `git merge`, `git tag` command
+  - completion of `/commit`, `/create-pr`, `/ship`, `/pr-review`
+- **The plugin pushes silently.** Pending records are batch-pushed to
+  Notion under their matching dir page. A summary block prints in chat
+  with the new page names and locations.
 
-**Day-to-day, you write notes in Notion the normal way** — a rule, a gotcha, a decision, a bug postmortem. Then `/cg-sync-notion <scope>` pulls them into the graph and `/cg-search` surfaces them when relevant.
+To opt out, set `workspace.json.autoPush.enabled = false` and the
+trigger script becomes a no-op.
 
-The plugin does **not** auto-summarize your project into Notion pages. `/cg-bootstrap` only creates an empty skeleton you fill yourself.
+`/cg-bootstrap` itself populates the root and per-dir pages with a
+generated paragraph — no more empty stubs. Re-run with
+`/cg-bootstrap --refresh` after major repo changes.
 
 ---
 
@@ -85,8 +93,8 @@ The plugin does **not** auto-summarize your project into Notion pages. `/cg-boot
 | -------------------- | ---------------------------------------------------------------------------------- |
 | `/cg-start`          | Onboarding wizard — init workspace + first sync (Notion or markdown).              |
 | `/cg-init`           | Create `.context-graph/workspace.json` only, no sync.                              |
-| `/cg-bootstrap`      | Create the Notion skeleton (root page + per-dir pages) for this workspace.        |
-| `/cg-sync-notion`    | Pull Notion pages into the graph (default), or `push` promoted records back.      |
+| `/cg-bootstrap`      | Create the Notion skeleton AND fill each page with a generated paragraph. Re-run with `--refresh` to regenerate. |
+| `/cg-sync-notion`    | Pull Notion pages into the graph. The plugin's auto-push path uses an `auto` mode internally; you do not run it manually. |
 | `/cg-index`          | Ingest a markdown folder into the graph.                                           |
 | `/cg-search`         | Build a context pack for a task or query. Supports `#hashtag` marker filters.     |
 | `/cg-classify`       | Normalize markers and hierarchy for a single note.                                 |
