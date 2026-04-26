@@ -75,9 +75,10 @@ If `$ARGUMENTS` contains `--refresh`:
    the user to run `/cg-bootstrap` first and stop.
 2. For the root page, regenerate the body via `build_root_body` and call
    `notion-update-page` with `command: "replace_content"`,
-   `allow_deleting_content: true`. The `Curated` and `Indexes` sections
-   are preserved because they live in their own child pages, not in the
-   root body.
+   `allow_deleting_content: true`. The `Curated` sections live in their
+   own child pages and are preserved. The regenerated `## Indexes`
+   section will look identical because it's static text generated from
+   the same template.
 3. For each dir page recorded in `dirPageIds`, regenerate the paragraph
    via `build_dir_paragraph` and call `notion-update-page` similarly.
 4. Print a short summary: `Refreshed root and N dir pages.`

@@ -384,5 +384,53 @@ class SchemaNotionDirTests(unittest.TestCase):
         self.assertFalse(notion_dir.get("required", False))
 
 
+class MergeSourceStickyArbiterTests(unittest.TestCase):
+    def test_pending_arbitration_arbiter_persists_through_merge(self):
+        from context_graph_core import _merge_source
+        existing_source = {
+            "system": "notion",
+            "metadata": {
+                "classifierNotes": {"arbiter": "pending-arbitration", "scores": {}},
+                "parent": "kenmore > bl-api/",
+            },
+        }
+        extra_metadata = {
+            "classifierNotes": {
+                "arbiter": "deterministic",
+                "scores": {"type": [{"value": "rule", "score": 0.5}]},
+                "regionsUsed": ["body"],
+            },
+        }
+        merged = _merge_source({"source": existing_source}, extra_metadata)
+        # Sticky: arbiter must remain pending-arbitration.
+        self.assertEqual(merged["metadata"]["classifierNotes"]["arbiter"], "pending-arbitration")
+        # Other classifierNotes fields should reflect the fresh classifier output.
+        self.assertEqual(merged["metadata"]["classifierNotes"].get("regionsUsed"), ["body"])
+
+    def test_deterministic_arbiter_does_not_stick(self):
+        from context_graph_core import _merge_source
+        existing_source = {
+            "system": "notion",
+            "metadata": {
+                "classifierNotes": {"arbiter": "deterministic"},
+            },
+        }
+        extra_metadata = {
+            "classifierNotes": {"arbiter": "fallback"},
+        }
+        merged = _merge_source({"source": existing_source}, extra_metadata)
+        # Non-pending arbiter follows normal merge: extras overwrite.
+        self.assertEqual(merged["metadata"]["classifierNotes"]["arbiter"], "fallback")
+
+    def test_no_classifier_notes_in_existing_uses_extras(self):
+        from context_graph_core import _merge_source
+        existing_source = {"system": "notion", "metadata": {"parent": "kenmore"}}
+        extra_metadata = {
+            "classifierNotes": {"arbiter": "deterministic"},
+        }
+        merged = _merge_source({"source": existing_source}, extra_metadata)
+        self.assertEqual(merged["metadata"]["classifierNotes"]["arbiter"], "deterministic")
+
+
 if __name__ == "__main__":
     unittest.main()

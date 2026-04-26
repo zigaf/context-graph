@@ -12,7 +12,6 @@ dicts only.
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +20,7 @@ from context_graph_core import (
     list_pending_pushes,
     list_pushable_records,
     load_push_state,
+    now_iso,
 )
 
 
@@ -105,7 +105,7 @@ def build_plan(*, workspace_root: Path | str) -> dict[str, Any]:
             "creates": [],
             "updates": [],
             "skipped": {},
-            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "generatedAt": now_iso(),
         }
     pending_ids = list_pending_pushes(workspace_root=ws)
     if not pending_ids:
@@ -114,7 +114,7 @@ def build_plan(*, workspace_root: Path | str) -> dict[str, Any]:
             "creates": [],
             "updates": [],
             "skipped": {},
-            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "generatedAt": now_iso(),
         }
     graph_path = str(default_graph_path(ws))
     pending_set = set(pending_ids)
@@ -169,5 +169,5 @@ def build_plan(*, workspace_root: Path | str) -> dict[str, Any]:
         "creates": creates,
         "updates": updates,
         "skipped": skipped,
-        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "generatedAt": now_iso(),
     }
