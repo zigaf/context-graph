@@ -41,3 +41,16 @@ Steps:
    - That local `.context-graph` state entries were added to `.gitignore`.
 
 If the Context Graph MCP returns an already-initialized error, surface it verbatim and suggest reviewing the existing `.context-graph/workspace.json`.
+
+## Auto-push hooks
+
+After the workspace is initialised, the auto-push hooks are inherited
+from the plugin's repo-level `hooks.json`. New users do not need to
+copy anything: the plugin's `hooks.json` is loaded by Claude Code
+automatically when the plugin is enabled.
+
+Claude Code merges plugin-level hooks with any user-level hooks the
+user already has — there is nothing to copy or edit. To opt out of
+auto-push, set `workspace.json.autoPush.enabled` to `false`; the
+`scripts/trigger_detect.py` trigger script honours the flag and exits
+silently.
