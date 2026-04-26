@@ -41,12 +41,15 @@ Follow this exact sequence:
 2. **Call `mcp__context-graph__classify_record`** with `{"record": {...}}` to normalize markers, infer missing values, and compute the hierarchy path.
 3. **Inspect `missingRequiredMarkers`.** If a required marker is missing AND the user's intent is clear, fill it from context. If still missing, ask the user one short question (e.g. "Domain: payments or auth?") rather than dropping the record.
 4. **Call `mcp__context-graph__index_records`** with `{"records": [normalized_record]}` to upsert into the local graph and rebuild affected edges.
-5. **If Notion is connected** (`workspace.notion.rootPageId` exists in `workspace.json`), push:
-   a. Call `mcp__context-graph__plan_notion_push` with `{"recordIds": [record.id]}` to confirm it would be a create vs update.
-   b. Call `mcp__context-graph__record_to_notion_payload` to get the title/blocks/parent for the page.
-   c. Call the Notion MCP tool `notion-create-pages` (or `notion-update-page`) with the payload. The parent page is `workspace.notion.dirPageIds[<best matching dir>]` if the record's `artifact` matches a dir prefix; otherwise `workspace.notion.rootPageId`.
-   d. Call `mcp__context-graph__apply_notion_push_result` with the resulting Notion page id.
-6. **Acknowledge briefly.** A one-line confirmation back to the user (e.g. "Captured rule: idempotency keys for webhooks (`#rule #payments`)") — do not over-explain.
+5. **Enqueue for auto-push.** Call
+   `mcp__context-graph__enqueue_push` with `{"recordId": <record.id>}`.
+   The record will be auto-pushed on the next session-end trigger
+   (a keyword phrase, a `git commit`/`push`/`merge`/`tag` command, or
+   completion of `/commit`, `/create-pr`, `/ship`, `/pr-review`).
+   No Notion API call from this skill.
+6. **Acknowledge briefly.** A one-line confirmation back to the user
+   (e.g. "Captured rule: idempotency keys for webhooks (#rule
+   #payments). Will be auto-pushed on the next session-end trigger.").
 
 ## Review request
 
@@ -55,13 +58,13 @@ When the user asks "сделай ревью", "review this", "проверь э�
 1. Determine the scope (file path, module, or topic mentioned).
 2. Call `mcp__context-graph__search_graph` with `intentMode="architecture"` and a query targeting the scope. Pull `type=rule` and `type=decision` records — conventions are stored as `type=rule, scope=convention`, so the rule pass already covers them. If you want only conventions, add `markers={"scope": "convention"}` to narrow.
 3. Apply them to the review explicitly — cite which rule each finding comes from. If you find an issue not covered by an existing rule, capture it as a NEW rule per the protocol above.
-4. After the review, if any new rules were captured, push them to Notion (step 5 of the capture protocol).
+4. After the review, if any new rules were captured, enqueue them for auto-push (step 5 of the capture protocol).
 
 ## Bootstrap awareness
 
-If the SessionStart prime indicates that the workspace is not bootstrapped to Notion (`workspace.notion.rootPageId` is missing AND `workspace.notion.bootstrapDeclined` is not true), offer the bootstrap once at the start of your first substantive turn. Use `mcp__context-graph__bootstrap_preview` to fetch the preview, present it to the user, and either:
+If the SessionStart prime indicates that the workspace is not bootstrapped to Notion (`workspace.notion.rootPageId` is missing AND `workspace.notion.bootstrapDeclined` is not true), offer the bootstrap once at the start of your first substantive turn. The bootstrap itself runs through the `/cg-bootstrap` slash command, which orchestrates the Notion page creation via the official Notion MCP. From this skill, you only need to:
 
-- Run `mcp__context-graph__apply_bootstrap_decision` with `decision="accept"` plus the Notion page IDs returned by `notion-create-pages`, OR
+- Use `mcp__context-graph__bootstrap_preview` to fetch the preview and present it to the user, then suggest they run `/cg-bootstrap` to accept, OR
 - Run `mcp__context-graph__apply_bootstrap_decision` with `decision="decline"` if the user opts out.
 
 After either decision, do not ask again in the same workspace.
@@ -72,13 +75,15 @@ If Notion is not connected (no `rootPageId`) and the user has not declined boots
 
 > "Notion is not connected for this workspace. Run `/cg-sync-notion` once (OAuth, no API key) to enable proactive note management. Or run `/cg-init --offline` (or decline the bootstrap prompt) to keep notes only in the local graph."
 
-If declined, continue capturing locally — every step of the capture protocol works against the local graph alone. Skip step 5 (Notion push).
+If declined, continue capturing locally — every step of the capture protocol works against the local graph alone. Skip step 5 (the enqueue is a no-op without a connected Notion workspace, so don't bother).
 
 ## Failure modes
 
 - **`classify_record` returns errors.** Show the error to the user and stop — do not silently skip.
-- **`index_records` succeeds but `plan_notion_push` shows no creates and no updates.** That means the record's `markers.type` is not in the pushable set (`rule` / `decision` is the default). Either adjust the type or skip the push.
-- **Notion MCP returns an error.** Report it. The local record is already saved, so no data is lost; the user can re-run a manual `/cg-sync-notion push` later.
+- **`index_records` succeeds but the record is not pushable.** That means the record's `markers.type` is not in the pushable set the auto-pusher recognises. Either adjust the type or skip the enqueue.
+- **enqueue_push fails** (workspace not initialised, disk error). Report
+  the error and stop. The local record is already saved, so the user
+  can retry the capture or run `/cg-init` first.
 
 ## What NOT to do
 

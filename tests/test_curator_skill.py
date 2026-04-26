@@ -43,9 +43,24 @@ class CuratorSkillSmokeTests(unittest.TestCase):
 
     def test_mcp_tool_calls_referenced(self):
         text = self.SKILL_PATH.read_text(encoding="utf-8")
-        for tool in ("classify_record", "index_records", "plan_notion_push",
-                     "apply_notion_push_result", "record_to_notion_payload"):
+        for tool in ("classify_record", "index_records", "enqueue_push"):
             self.assertIn(tool, text, f"Skill must mention {tool}")
+
+
+class CuratorEnqueueOnlyTests(unittest.TestCase):
+    SKILL_PATH = Path(__file__).resolve().parents[1] / "skills" / "context-graph-curator" / "SKILL.md"
+
+    def test_skill_describes_enqueue_step(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        self.assertIn("enqueue_push", text)
+        self.assertIn("Will be auto-pushed on the next session-end trigger", text)
+
+    def test_skill_does_not_call_notion_create_inline(self):
+        text = self.SKILL_PATH.read_text(encoding="utf-8")
+        # The skill should no longer call notion-create-pages directly
+        # for captured signals — that path moved to the trigger flow.
+        self.assertNotIn("notion-create-pages", text)
+        self.assertNotIn("notion-update-page", text)
 
 
 if __name__ == "__main__":
