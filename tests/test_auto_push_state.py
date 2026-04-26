@@ -148,6 +148,48 @@ class CliQueueSubcommandTests(unittest.TestCase):
             result = self._run({}, "list-pending-pushes", ws)
             self.assertEqual(result["pending"], ["notion:abc", "notion:def"])
 
+    def test_enqueue_then_dequeue(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(tmp)
+            self._run({"recordId": "notion:abc"}, "enqueue-push", ws)
+            self._run({"recordId": "notion:abc"}, "dequeue-push", ws)
+            result = self._run({}, "list-pending-pushes", ws)
+            self.assertEqual(result["pending"], [])
+
+    def test_enqueue_missing_record_id_errors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(tmp)
+            proc = subprocess.run(
+                ["python3", str(self.SCRIPT), "enqueue-push"],
+                input="{}",
+                capture_output=True,
+                text=True,
+                cwd=str(ws),
+                check=False,
+            )
+            self.assertNotEqual(
+                proc.returncode,
+                0,
+                f"expected non-zero exit, got stdout={proc.stdout!r} stderr={proc.stderr!r}",
+            )
+
+    def test_dequeue_missing_record_id_errors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(tmp)
+            proc = subprocess.run(
+                ["python3", str(self.SCRIPT), "dequeue-push"],
+                input="{}",
+                capture_output=True,
+                text=True,
+                cwd=str(ws),
+                check=False,
+            )
+            self.assertNotEqual(
+                proc.returncode,
+                0,
+                f"expected non-zero exit, got stdout={proc.stdout!r} stderr={proc.stderr!r}",
+            )
+
 
 class CliApplyAutoPushResultTests(unittest.TestCase):
     SCRIPT = ROOT / "scripts" / "context_graph_cli.py"

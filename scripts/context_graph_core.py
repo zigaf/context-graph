@@ -3001,8 +3001,10 @@ def list_pending_pushes(workspace_root: Path | str | None = None) -> list[str]:
 def enqueue_push(record_id: str, workspace_root: Path | str | None = None) -> list[str]:
     """Append ``record_id`` to the push queue if not already present.
 
-    Returns the new queue.
+    Returns the new queue. Raises ``ValueError`` on empty/None ``record_id``.
     """
+    if not record_id:
+        raise ValueError("enqueue_push requires record_id.")
     record_id = str(record_id)
     state = load_push_state(workspace_root)
     pending = list(state.get("pending") or [])
@@ -3014,7 +3016,12 @@ def enqueue_push(record_id: str, workspace_root: Path | str | None = None) -> li
 
 
 def dequeue_push(record_id: str, workspace_root: Path | str | None = None) -> list[str]:
-    """Remove ``record_id`` from the push queue. Idempotent."""
+    """Remove ``record_id`` from the push queue. Idempotent.
+
+    Raises ``ValueError`` on empty/None ``record_id``.
+    """
+    if not record_id:
+        raise ValueError("dequeue_push requires record_id.")
     record_id = str(record_id)
     state = load_push_state(workspace_root)
     pending = [item for item in (state.get("pending") or []) if item != record_id]

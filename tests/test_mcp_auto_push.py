@@ -41,6 +41,28 @@ class EnqueuePushTests(unittest.TestCase):
             result = list_pending({"workspaceRoot": str(ws)})
             self.assertEqual(result["pending"], ["notion:rule-a"])
 
+    def test_dequeue_round_trip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(tmp)
+            enqueue = _handler("enqueue_push")
+            dequeue = _handler("dequeue_push")
+            list_pending = _handler("list_pending_pushes")
+
+            enqueue({"recordId": "notion:rule-z", "workspaceRoot": str(ws)})
+            dequeue({"recordId": "notion:rule-z", "workspaceRoot": str(ws)})
+            result = list_pending({"workspaceRoot": str(ws)})
+            self.assertEqual(result["pending"], [])
+
+    def test_enqueue_missing_record_id_raises(self):
+        enqueue = _handler("enqueue_push")
+        with self.assertRaises(ValueError):
+            enqueue({"workspaceRoot": "/tmp"})
+
+    def test_dequeue_missing_record_id_raises(self):
+        dequeue = _handler("dequeue_push")
+        with self.assertRaises(ValueError):
+            dequeue({"workspaceRoot": "/tmp"})
+
 
 if __name__ == "__main__":
     unittest.main()

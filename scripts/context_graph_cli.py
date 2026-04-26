@@ -196,19 +196,18 @@ def _run_bootstrap(argv: list[str]) -> int:
 
 def _handle_enqueue_push(payload: dict) -> dict:
     record_id = payload.get("recordId") or payload.get("record_id")
-    if not record_id:
-        raise SystemExit("enqueue-push requires recordId")
     workspace = payload.get("workspaceRoot")
-    pending = enqueue_push(str(record_id), workspace_root=workspace)
+    # ``enqueue_push`` raises ValueError on missing record_id (matches
+    # delete_record/archive_record pattern). Let it propagate.
+    pending = enqueue_push(record_id, workspace_root=workspace)
     return {"pending": pending}
 
 
 def _handle_dequeue_push(payload: dict) -> dict:
     record_id = payload.get("recordId") or payload.get("record_id")
-    if not record_id:
-        raise SystemExit("dequeue-push requires recordId")
     workspace = payload.get("workspaceRoot")
-    pending = dequeue_push(str(record_id), workspace_root=workspace)
+    # See _handle_enqueue_push — core helper validates record_id.
+    pending = dequeue_push(record_id, workspace_root=workspace)
     return {"pending": pending}
 
 
@@ -220,7 +219,9 @@ def _handle_list_pending_pushes(payload: dict) -> dict:
 def _handle_apply_auto_push_result(payload: dict) -> dict:
     results = payload.get("results") or []
     if not isinstance(results, list):
-        raise SystemExit("apply-auto-push-result requires 'results' to be a list")
+        # Argument-shape check (not a missing-field check). TypeError matches
+        # Python conventions: wrong type vs. missing/empty value.
+        raise TypeError("apply-auto-push-result requires 'results' to be a list.")
     workspace = payload.get("workspaceRoot")
     state = load_push_state(workspace_root=workspace)
     for entry in results:
