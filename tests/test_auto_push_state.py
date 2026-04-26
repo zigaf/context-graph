@@ -149,5 +149,40 @@ class CliQueueSubcommandTests(unittest.TestCase):
             self.assertEqual(result["pending"], ["notion:abc", "notion:def"])
 
 
+class CliApplyAutoPushResultTests(unittest.TestCase):
+    SCRIPT = ROOT / "scripts" / "context_graph_cli.py"
+
+    def test_apply_records_revision_and_dequeues(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(tmp)
+            enqueue_push("notion:rule-z", workspace_root=ws)
+            payload = {
+                "results": [{
+                    "recordId": "notion:rule-z",
+                    "notionPageId": "page-z",
+                    "revision": 2,
+                    "pushedAt": "2026-04-26T20:00:00Z",
+                }],
+            }
+            proc = subprocess.run(
+                ["python3", str(self.SCRIPT), "apply-auto-push-result"],
+                input=json.dumps(payload),
+                capture_output=True,
+                text=True,
+                cwd=str(ws),
+                check=True,
+            )
+            result = json.loads(proc.stdout)
+            self.assertEqual(result["pushState"]["pending"], [])
+            self.assertEqual(
+                result["pushState"]["records"]["notion:rule-z"]["lastPushedRevision"],
+                2,
+            )
+            self.assertEqual(
+                result["pushState"]["records"]["notion:rule-z"]["notionPageId"],
+                "page-z",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

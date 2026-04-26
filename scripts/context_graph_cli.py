@@ -9,6 +9,7 @@ from typing import Any, Sequence
 from context_graph_core import (
     WorkspaceNotInitializedError,
     apply_proposal_decision,
+    apply_push_result,
     archive_record,
     build_context_pack,
     classify_record,
@@ -28,7 +29,9 @@ from context_graph_core import (
     learn_schema,
     list_pending_pushes,
     list_proposals,
+    load_push_state,
     promote_pattern,
+    save_push_state,
     search_graph,
     unarchive_record,
 )
@@ -214,6 +217,30 @@ def _handle_list_pending_pushes(payload: dict) -> dict:
     return {"pending": list_pending_pushes(workspace_root=workspace)}
 
 
+def _handle_apply_auto_push_result(payload: dict) -> dict:
+    results = payload.get("results") or []
+    if not isinstance(results, list):
+        raise SystemExit("apply-auto-push-result requires 'results' to be a list")
+    workspace = payload.get("workspaceRoot")
+    state = load_push_state(workspace_root=workspace)
+    for entry in results:
+        record_id = entry.get("recordId")
+        notion_page_id = entry.get("notionPageId")
+        if not record_id or not notion_page_id:
+            continue
+        revision = entry.get("revision")
+        pushed_at = entry.get("pushedAt")
+        state = apply_push_result(
+            str(record_id),
+            str(notion_page_id),
+            state,
+            revision=int(revision) if revision is not None else None,
+            pushed_at=str(pushed_at) if pushed_at else None,
+        )
+    save_push_state(state, workspace_root=workspace)
+    return {"pushState": state}
+
+
 def _handle_prepare_auto_push(payload: dict) -> dict:
     workspace_input = payload.get("workspaceRoot")
     if workspace_input is not None:
@@ -290,6 +317,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "dequeue-push",
             "list-pending-pushes",
             "prepare-auto-push",
+            "apply-auto-push-result",
             "eval",
         ],
         help="Command to execute",
@@ -343,6 +371,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = _handle_list_pending_pushes(payload)
     elif args.command == "prepare-auto-push":
         result = _handle_prepare_auto_push(payload)
+    elif args.command == "apply-auto-push-result":
+        result = _handle_apply_auto_push_result(payload)
     else:
         result = build_context_pack(payload)
 
