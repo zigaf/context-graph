@@ -372,5 +372,17 @@ class IntentScoringBackwardCompatTests(unittest.TestCase):
         self.assertEqual(a, b)
 
 
+class SchemaNotionDirTests(unittest.TestCase):
+    SCHEMA_PATH = Path(__file__).resolve().parents[1] / "docs" / "schema.json"
+
+    def test_notion_dir_is_optional_string_marker(self):
+        data = json.loads(self.SCHEMA_PATH.read_text(encoding="utf-8"))
+        markers = data.get("markers") or {}
+        notion_dir = markers.get("notionDir")
+        self.assertIsNotNone(notion_dir)
+        self.assertEqual(notion_dir.get("type"), "string")
+        self.assertFalse(notion_dir.get("required", False))
+
+
 if __name__ == "__main__":
     unittest.main()

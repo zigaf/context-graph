@@ -87,7 +87,12 @@
       "intersection",
       "system",
       "module"
-    ]
+    ],
+    "notionDir": {
+      "type": "string",
+      "required": false,
+      "description": "Optional manual override pinning a record to a specific Notion dir page (e.g. 'admin/'). Empty / absent uses auto-routing."
+    }
   },
   "aliases": {
     "type": {
