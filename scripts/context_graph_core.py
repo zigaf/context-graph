@@ -955,7 +955,24 @@ def _required_fields(schema: dict[str, Any]) -> list[str]:
 def _merge_source(record: dict[str, Any], extra_metadata: dict[str, Any]) -> dict[str, Any]:
     source = dict(record.get("source") or {})
     metadata = dict(source.get("metadata") or {})
-    metadata.update(extra_metadata)
+    # Sticky semantics: if the input record already carries
+    # ``classifierNotes.arbiter == "pending-arbitration"``, preserve that
+    # marker through classification so downstream consumers (e.g. the
+    # auto-push planner) can keep skipping the record until a human
+    # explicitly resolves the ambiguity.
+    incoming_notes = metadata.get("classifierNotes")
+    if (
+        isinstance(incoming_notes, dict)
+        and incoming_notes.get("arbiter") == "pending-arbitration"
+        and isinstance(extra_metadata.get("classifierNotes"), dict)
+    ):
+        merged_extra = dict(extra_metadata)
+        merged_notes = dict(extra_metadata["classifierNotes"])
+        merged_notes["arbiter"] = "pending-arbitration"
+        merged_extra["classifierNotes"] = merged_notes
+        metadata.update(merged_extra)
+    else:
+        metadata.update(extra_metadata)
     source["metadata"] = metadata
     return source
 
