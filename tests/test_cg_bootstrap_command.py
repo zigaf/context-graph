@@ -22,13 +22,12 @@ class CgBootstrapDocumentationTests(unittest.TestCase):
 
     def test_step_6_uses_generated_bodies(self):
         text = self.COMMAND_PATH.read_text(encoding="utf-8")
-        # Step 6a must reference the build_root_body output as the page body.
-        # Heuristic: the doc must mention the helper name in the same sentence
-        # as the create-pages call, OR explicitly mention "body =" plus the
-        # helper. We just check both helpers appear at least twice — once in
-        # the generation block, once at the call site.
-        self.assertGreaterEqual(text.count("build_root_body"), 2)
-        self.assertGreaterEqual(text.count("build_dir_paragraph"), 2)
+        # Each helper must appear at the generation block (1), at the
+        # corresponding step 6 call site (2), and in the Refresh path (3),
+        # plus the bash heredoc itself (4) — so at least 4 occurrences.
+        # If step 6a/6c stop referencing the helpers we'd drop to 3.
+        self.assertGreaterEqual(text.count("build_root_body"), 4)
+        self.assertGreaterEqual(text.count("build_dir_paragraph"), 4)
 
 
 if __name__ == "__main__":
