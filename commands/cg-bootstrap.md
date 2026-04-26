@@ -56,9 +56,9 @@ The stdout text is the markdown body for the per-dir page. Pass it to
 `notion-create-pages` together with the dir title (e.g. `bl-api/`).
 
 6. If the user says yes:
-   a. Call the Notion MCP `notion-create-pages` to create the parent page (title = `projectTitle`, body = `tagline` or empty).
+   a. Call the Notion MCP `notion-create-pages` to create the parent page with title = `projectTitle` and body = the markdown produced by the `build_root_body` invocation shown above.
    b. Capture the resulting page id (`rootPageId`) and page url (`rootPageUrl`).
-   c. For each dir in `topLevelDirs`, call `notion-create-pages` with parent = `rootPageId` and title = `<path> — <purpose>` (purpose may be empty; that's fine). Collect the results into `dirPageIds: {path: pageId}`.
+   c. For each dir in `topLevelDirs`, call `notion-create-pages` with parent = `rootPageId`, title = `<path> — <purpose>` (purpose may be empty; that's fine), and body = the paragraph produced by `build_dir_paragraph(Path("<absolute dir path>"))` shown above. Collect the results into `dirPageIds: {path: pageId}`.
    d. Call `mcp__context-graph__apply_bootstrap_decision` with `{workspaceRoot, decision: "accept", rootPageId, rootPageUrl, dirPageIds}`.
    e. Confirm to the user with the new root page URL.
 
