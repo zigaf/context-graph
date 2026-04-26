@@ -126,3 +126,44 @@ python3 scripts/context_graph_cli.py push-notion --apply
 ```
 
 The CLI defaults to `--dry-run` so accidental invocation cannot duplicate content.
+
+## Auto (driven by triggers)
+
+Use this mode when invoked from `scripts/trigger_detect.py`. Do NOT
+prompt for confirmation in this mode — the user has already opted in
+during onboarding by accepting the auto-push hooks.
+
+Steps:
+
+1. Read `.context-graph/auto_push_plan.json`. If the file does not
+   exist or `blocked` is true, exit silently with the appropriate
+   one-line message:
+   - `blocked == true` and `reason == "no-notion-root"`: `Auto-push paused: run /cg-bootstrap first.`
+   - File missing: nothing — the trigger script already exited cleanly.
+2. For each entry in `creates`:
+   a. Call `mcp__context-graph__record_to_notion_payload` with `{recordId}`.
+   b. Call `mcp__notion__notion-create-pages` with `parent: {type: "page_id", page_id: parentPageId}` and the returned title/body.
+   c. Capture the new page id and append `{recordId, notionPageId, revision, pushedAt}` to a results list, where `pushedAt` is the current ISO-8601 UTC timestamp.
+3. For each entry in `updates`:
+   a. Call `mcp__context-graph__record_to_notion_payload`.
+   b. Call `mcp__notion__notion-update-page` with `page_id: notionPageId`, `command: "replace_content"`, `allow_deleting_content: true`, and the returned content.
+   c. Append `{recordId, notionPageId, revision, pushedAt}` to results.
+4. Call the CLI subcommand `apply-auto-push-result` with `{"results": <list>}`. This dequeues successful records and writes their `lastPushedRevision`/`lastPushedAt` into `notion_push.json`.
+5. Print a summary block:
+
+```text
+Auto-pushed to Notion
+  + Rule: <title> → <dir>
+  + Decision: <title> → <dir>
+```
+
+Skipped records (from `plan.skipped`) are mentioned as a single line at
+the end if non-empty: `Skipped N records: <reason summary>`.
+
+Failure handling: on per-record API error, do NOT include that record in
+the results list. The CLI subcommand only dequeues successes, so the
+record will be retried on the next trigger.
+
+Note: the trigger script that invokes this mode also calls
+`prepare-auto-push` to refresh `.context-graph/auto_push_plan.json`
+before this slash command runs.
