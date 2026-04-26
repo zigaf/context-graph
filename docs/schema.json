@@ -87,7 +87,9 @@
       "intersection",
       "system",
       "module"
-    ],
+    ]
+  },
+  "overrides": {
     "notionDir": {
       "type": "string",
       "required": false,

@@ -71,6 +71,8 @@ def score_field(
     allowed_values = (schema.get("markers", {}) or {}).get(field, [])
     if not allowed_values:
         return []
+    if not isinstance(allowed_values, list):
+        return []
 
     corpus_size = _infer_corpus_size(idf)
     max_idf = _max_idf(idf, corpus_size)

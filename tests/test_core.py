@@ -377,8 +377,8 @@ class SchemaNotionDirTests(unittest.TestCase):
 
     def test_notion_dir_is_optional_string_marker(self):
         data = json.loads(self.SCHEMA_PATH.read_text(encoding="utf-8"))
-        markers = data.get("markers") or {}
-        notion_dir = markers.get("notionDir")
+        overrides = data.get("overrides") or {}
+        notion_dir = overrides.get("notionDir")
         self.assertIsNotNone(notion_dir)
         self.assertEqual(notion_dir.get("type"), "string")
         self.assertFalse(notion_dir.get("required", False))
