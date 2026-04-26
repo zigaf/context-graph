@@ -12,6 +12,18 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "matcher": ".*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-.}/scripts/trigger_detect.py\" --source keyword 2>/dev/null || true",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Write|Edit",
@@ -20,6 +32,28 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-.}/scripts/post_edit_reindex.py\" 2>/dev/null || true",
             "timeout": 25
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-.}/scripts/trigger_detect.py\" --source git 2>/dev/null || true",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "SlashCommand": [
+      {
+        "matcher": "commit|create-pr|ship|pr-review",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT:-.}/scripts/trigger_detect.py\" --source slash 2>/dev/null || true",
+            "timeout": 5
           }
         ]
       }
