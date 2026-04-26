@@ -106,6 +106,20 @@ def _is_trigger(source: str, text: str) -> bool:
     return False
 
 
+def _is_auto_push_enabled(workspace: Path) -> bool:
+    manifest_path = workspace / ".context-graph" / "workspace.json"
+    if not manifest_path.exists():
+        return True
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return True
+    flag = (data.get("autoPush") or {}).get("enabled")
+    if flag is False:
+        return False
+    return True
+
+
 def _run_prepare(workspace: Path) -> bool:
     cli = Path(__file__).resolve().parent / "context_graph_cli.py"
     proc = subprocess.run(
@@ -134,6 +148,8 @@ def main(argv: Iterable[str] | None = None, *, cwd: str | None = None) -> int:
     start = Path(cwd) if cwd else Path.cwd()
     workspace = _walk_up_for_workspace(start)
     if workspace is None:
+        return 0
+    if not _is_auto_push_enabled(workspace):
         return 0
     ok = _run_prepare(workspace)
     if not ok:

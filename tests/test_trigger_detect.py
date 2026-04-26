@@ -89,3 +89,26 @@ class WorkspaceGatingTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             output = buf.getvalue().strip()
             self.assertIn("Run /cg-sync-notion auto", output)
+
+
+class AutoPushOptOutTests(unittest.TestCase):
+    def test_disabled_workspace_skips_trigger(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Path(tmp).resolve()
+            (ws / ".context-graph").mkdir(parents=True, exist_ok=True)
+            (ws / ".context-graph" / "workspace.json").write_text(
+                json.dumps({
+                    "version": "1",
+                    "id": "t",
+                    "rootPath": str(ws),
+                    "autoPush": {"enabled": False},
+                }),
+                encoding="utf-8",
+            )
+            payload = {"source": "keyword", "text": "готово"}
+            buf = StringIO()
+            with mock.patch.object(sys, "stdin", StringIO(json.dumps(payload))), \
+                 mock.patch.object(sys, "stdout", buf):
+                exit_code = trigger_main(["--source", "keyword"], cwd=str(ws))
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(buf.getvalue().strip(), "")
