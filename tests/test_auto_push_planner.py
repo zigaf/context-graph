@@ -232,3 +232,51 @@ class CliPrepareAutoPushTests(unittest.TestCase):
                 json.loads(plan_path.read_text())["creates"][0]["recordId"],
                 "notion:rule-cli",
             )
+
+    def test_walks_up_to_find_workspace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(tmp, notion_root="root-page", dir_pages={})
+            graph_path = str(ws / ".context-graph" / "graph.json")
+            index_records({
+                "graphPath": graph_path,
+                "workspaceRoot": str(ws),
+                "records": [{
+                    "id": "notion:walkup",
+                    "title": "Walkup",
+                    "content": "Body",
+                    "markers": {"type": "rule", "status": "done"},
+                    "source": {"system": "notion", "metadata": {}},
+                }],
+            })
+            enqueue_push("notion:walkup", workspace_root=ws)
+            subdir = ws / "scripts"
+            subdir.mkdir(exist_ok=True)
+            proc = subprocess.run(
+                ["python3", str(self.SCRIPT), "prepare-auto-push"],
+                input="{}",
+                capture_output=True,
+                text=True,
+                cwd=str(subdir),  # invoked from a subdirectory
+                check=True,
+            )
+            payload = json.loads(proc.stdout)
+            # Plan must be written to the workspace root, not the subdir.
+            self.assertEqual(payload["planPath"], str(ws / ".context-graph" / "auto_push_plan.json"))
+            self.assertFalse((subdir / ".context-graph").exists(),
+                "must not create phantom .context-graph in cwd subdir")
+
+    def test_raises_outside_any_workspace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            # No workspace marker anywhere up the tree.
+            proc = subprocess.run(
+                ["python3", str(self.SCRIPT), "prepare-auto-push"],
+                input="{}",
+                capture_output=True,
+                text=True,
+                cwd=str(tmp),
+                check=False,
+            )
+            self.assertNotEqual(proc.returncode, 0,
+                f"expected non-zero exit, got stdout={proc.stdout!r} stderr={proc.stderr!r}")
+            # Must not have created a phantom .context-graph.
+            self.assertFalse((Path(tmp) / ".context-graph").exists())

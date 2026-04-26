@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from context_graph_core import (
+    WorkspaceNotInitializedError,
     apply_proposal_decision,
     archive_record,
     build_context_pack,
@@ -14,6 +15,7 @@ from context_graph_core import (
     delete_record,
     dequeue_push,
     enqueue_push,
+    find_workspace_root,
     format_graph_diff,
     format_inspect_record,
     graph_diff,
@@ -213,11 +215,19 @@ def _handle_list_pending_pushes(payload: dict) -> dict:
 
 
 def _handle_prepare_auto_push(payload: dict) -> dict:
-    workspace = payload.get("workspaceRoot")
-    if workspace is None:
-        # Default to cwd; build_plan will validate.
-        workspace = "."
-    workspace_path = Path(str(workspace)).resolve()
+    workspace_input = payload.get("workspaceRoot")
+    if workspace_input is not None:
+        workspace_path = Path(str(workspace_input)).resolve()
+    else:
+        # Walk up from cwd looking for the workspace marker, like the
+        # queue handlers do. Raise if nothing is found instead of
+        # silently creating a phantom .context-graph/ in the cwd.
+        found = find_workspace_root()
+        if found is None:
+            raise WorkspaceNotInitializedError(
+                "No Context Graph workspace found. Run /cg-init to initialize."
+            )
+        workspace_path = found
     plan = build_plan(workspace_root=workspace_path)
     plan_path = workspace_path / ".context-graph" / "auto_push_plan.json"
     plan_path.parent.mkdir(parents=True, exist_ok=True)
