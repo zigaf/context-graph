@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -193,3 +194,41 @@ class BuildPlanTests(unittest.TestCase):
             self.assertEqual(plan["creates"], [])
             self.assertEqual(plan["updates"], [])
             self.assertEqual(plan["skipped"]["notion:rule-w"], "no-revision-change")
+
+
+class CliPrepareAutoPushTests(unittest.TestCase):
+    SCRIPT = ROOT / "scripts" / "context_graph_cli.py"
+
+    def test_prepare_writes_plan_to_disk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = _make_workspace(tmp, notion_root="root-page", dir_pages={})
+            graph_path = str(ws / ".context-graph" / "graph.json")
+            index_records({
+                "graphPath": graph_path,
+                "workspaceRoot": str(ws),
+                "records": [{
+                    "id": "notion:rule-cli",
+                    "title": "CLI rule",
+                    "content": "Body",
+                    "markers": {"type": "rule", "status": "done"},
+                    "source": {"system": "notion", "metadata": {}},
+                }],
+            })
+            enqueue_push("notion:rule-cli", workspace_root=ws)
+            proc = subprocess.run(
+                ["python3", str(self.SCRIPT), "prepare-auto-push"],
+                input="{}",
+                capture_output=True,
+                text=True,
+                cwd=str(ws),
+                check=True,
+            )
+            payload = json.loads(proc.stdout)
+            self.assertFalse(payload["plan"]["blocked"])
+            self.assertEqual(len(payload["plan"]["creates"]), 1)
+            plan_path = ws / ".context-graph" / "auto_push_plan.json"
+            self.assertTrue(plan_path.exists())
+            self.assertEqual(
+                json.loads(plan_path.read_text())["creates"][0]["recordId"],
+                "notion:rule-cli",
+            )

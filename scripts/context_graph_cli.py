@@ -30,6 +30,7 @@ from context_graph_core import (
     search_graph,
     unarchive_record,
 )
+from auto_push import build_plan
 
 
 def read_payload() -> dict[str, Any]:
@@ -211,6 +212,21 @@ def _handle_list_pending_pushes(payload: dict) -> dict:
     return {"pending": list_pending_pushes(workspace_root=workspace)}
 
 
+def _handle_prepare_auto_push(payload: dict) -> dict:
+    workspace = payload.get("workspaceRoot")
+    if workspace is None:
+        # Default to cwd; build_plan will validate.
+        workspace = "."
+    workspace_path = Path(str(workspace)).resolve()
+    plan = build_plan(workspace_root=workspace_path)
+    plan_path = workspace_path / ".context-graph" / "auto_push_plan.json"
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    with plan_path.open("w", encoding="utf-8") as f:
+        json.dump(plan, f, ensure_ascii=False, indent=2, sort_keys=True)
+        f.write("\n")
+    return {"planPath": str(plan_path), "plan": plan}
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     argv_list = list(sys.argv[1:] if argv is None else argv)
 
@@ -263,6 +279,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "enqueue-push",
             "dequeue-push",
             "list-pending-pushes",
+            "prepare-auto-push",
             "eval",
         ],
         help="Command to execute",
@@ -314,6 +331,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         result = _handle_dequeue_push(payload)
     elif args.command == "list-pending-pushes":
         result = _handle_list_pending_pushes(payload)
+    elif args.command == "prepare-auto-push":
+        result = _handle_prepare_auto_push(payload)
     else:
         result = build_context_pack(payload)
 
